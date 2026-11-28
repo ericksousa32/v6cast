@@ -1,0 +1,38 @@
+# Isolated build and test environment for v6cast.
+# Everything is installed inside this image; nothing is installed on the host.
+FROM registry.fedoraproject.org/fedora:45
+
+# Rust toolchain: installed system-wide so any user (the host UID is mapped
+# with --userns=keep-id) can use it. Cache directories are world-writable.
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/cargo-home \
+    PATH=/cargo-home/bin:/usr/local/bin:/usr/bin:/bin
+
+RUN dnf -y install curl ca-certificates \
+ && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable \
+        -c rustfmt -c clippy \
+ && mkdir -p /cargo-home /cargo-target \
+ && chmod 0777 /cargo-home /cargo-target
+
+# Build tools and libraries for v6cast-media (capture, encode, render, audio).
+# Upgrade first: the base image's mesa packages can be out of step with the
+# repositories, which breaks the mesa-va-drivers swap below.
+RUN dnf -y upgrade --refresh \
+ && dnf -y install \
+        gcc gcc-c++ cmake nasm clang clang-devel pkgconf-pkg-config \
+        pipewire-devel libva-devel libva-utils alsa-lib-devel \
+        vulkan-loader mesa-vulkan-drivers vulkan-tools \
+ && dnf clean all
+
+# The stock Fedora mesa VA-API driver (mesa-va-drivers) exposes no H.264 profiles
+# on AMD. RPM Fusion (free) provides mesa-va-drivers-freeworld, which does.
+# mesa-va-drivers is not installed in this image, so a plain install replaces it.
+# (`dnf swap` fails here with a mesa-libGL/mesa-dri-drivers solver conflict.)
+RUN dnf -y install \
+        "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
+ && dnf -y install mesa-va-drivers-freeworld \
+ && dnf clean all
+
+WORKDIR /work
+CMD ["bash"]

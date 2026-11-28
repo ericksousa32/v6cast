@@ -113,6 +113,40 @@ and executes, in order:
 2. `cargo clippy --workspace --all-targets -- -D warnings`
 3. `cargo test --workspace`
 
+## Isolated build environment
+
+`dev/Containerfile` builds a Fedora 45 image with the Rust toolchain, the media
+libraries (PipeWire, VA-API, ALSA, Vulkan) and the VA-API H.264 driver from RPM Fusion.
+Nothing is installed on the host. The image is built with rootless podman.
+
+Build the image (`dev/run.sh` also builds it on first use):
+
+```bash
+podman build -t localhost/v6cast-dev:latest -f dev/Containerfile dev
+```
+
+Run a command in it:
+
+```bash
+dev/run.sh cargo test --workspace
+dev/run.sh cargo clippy --workspace --all-targets -- -D warnings
+dev/run.sh vainfo
+```
+
+`dev/run.sh` mounts the repository at `/work`, passes `/dev/dri` through, and keeps the
+cargo registry and build output in named volumes (`v6cast-cargo-home`, `v6cast-target`).
+The host's `target/` is not used. It runs without `--privileged` and without sudo.
+
+What the container covers:
+
+- building, unit tests and integration tests;
+- VA-API H.264 through `/dev/dri` (`vainfo` lists the H.264 encode entrypoints on an AMD GPU).
+
+What it does not cover:
+
+- PipeWire and XDG portal screen capture need the host's Wayland session. Run the
+  compiled binary on the host for manual capture tests.
+
 ## Network setup
 
 v6cast does not pick a port for you. The server is started with a bind address such as
