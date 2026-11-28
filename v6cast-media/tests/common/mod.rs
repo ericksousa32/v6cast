@@ -541,3 +541,113 @@ impl Rng {
         self.0
     }
 }
+
+// ---------------------------------------------------------------------------
+// Slice header fields, for checks that the NAL types alone cannot make
+// ---------------------------------------------------------------------------
+
+/// The payload (after the one-byte NAL header, emulation prevention bytes
+/// removed) of the first NAL unit of `nal_type` in an Annex B access unit.
+fn nal_rbsp(au: &[u8], nal_type: u8) -> Option<Vec<u8>> {
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while i + 3 <= au.len() {
+        if au[i..i + 3] == [0, 0, 1] {
+            starts.push(i + 3);
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    for (n, &s) in starts.iter().enumerate() {
+        if s >= au.len() || au[s] & 0x1f != nal_type {
+            continue;
+        }
+        let mut end = starts.get(n + 1).map_or(au.len(), |next| next - 3);
+        while end > s && au[end - 1] == 0 {
+            end -= 1; // trailing_zero_8bits / the longer start code
+        }
+        let mut out = Vec::new();
+        let mut zeros = 0;
+        for &b in &au[s + 1..end] {
+            if zeros >= 2 && b == 3 {
+                zeros = 0;
+                continue;
+            }
+            zeros = if b == 0 { zeros + 1 } else { 0 };
+            out.push(b);
+        }
+        return Some(out);
+    }
+    None
+}
+
+struct Bits<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl Bits<'_> {
+    fn bit(&mut self) -> u32 {
+        let byte = self.data.get(self.pos / 8).expect("header ran out of bits");
+        let v = (byte >> (7 - self.pos % 8)) & 1;
+        self.pos += 1;
+        u32::from(v)
+    }
+
+    fn bits(&mut self, n: u32) -> u32 {
+        (0..n).fold(0, |v, _| (v << 1) | self.bit())
+    }
+
+    fn ue(&mut self) -> u32 {
+        let mut zeros = 0;
+        while self.bit() == 0 {
+            zeros += 1;
+            assert!(zeros < 32, "bad Exp-Golomb code");
+        }
+        (1 << zeros) - 1 + self.bits(zeros)
+    }
+}
+
+/// `(frame_num, idr_pic_id)` of the IDR slice in an access unit that also
+/// carries its SPS. Handles the SPS shapes our encoders write (profiles 66 and
+/// 77, POC type 0 or 2, frame_mbs_only_flag 1) and panics on anything else, so
+/// a wrong parse cannot pass quietly.
+pub fn idr_slice_ids(au: &[u8]) -> (u32, u32) {
+    let sps = nal_rbsp(au, 7).expect("no SPS");
+    assert!(
+        matches!(sps[0], 66 | 77),
+        "unexpected profile_idc {}",
+        sps[0]
+    );
+    let mut b = Bits {
+        data: &sps[3..], // profile_idc, constraint flags, level_idc
+        pos: 0,
+    };
+    b.ue(); // seq_parameter_set_id
+    let frame_num_bits = b.ue() + 4; // log2_max_frame_num_minus4 + 4
+    match b.ue() {
+        // pic_order_cnt_type
+        0 => {
+            b.ue(); // log2_max_pic_order_cnt_lsb_minus4
+        }
+        2 => {}
+        other => panic!("unexpected pic_order_cnt_type {other}"),
+    }
+    b.ue(); // max_num_ref_frames
+    b.bit(); // gaps_in_frame_num_value_allowed_flag
+    b.ue(); // pic_width_in_mbs_minus1
+    b.ue(); // pic_height_in_map_units_minus1
+    assert_eq!(b.bit(), 1, "frame_mbs_only_flag");
+
+    let slice = nal_rbsp(au, 5).expect("no IDR slice");
+    let mut s = Bits {
+        data: &slice,
+        pos: 0,
+    };
+    s.ue(); // first_mb_in_slice
+    s.ue(); // slice_type
+    s.ue(); // pic_parameter_set_id
+    let frame_num = s.bits(frame_num_bits);
+    (frame_num, s.ue())
+}

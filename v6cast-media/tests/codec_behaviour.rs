@@ -357,6 +357,69 @@ fn a_scene_cut_does_not_cause_an_unrequested_idr(enc: Which, dec: Which) {
     }
 }
 
+/// Two IDRs in a row are different pictures, so their `idr_pic_id` differs
+/// (H.264 7.4.3); a decoder may otherwise take the second for a repeat of the
+/// first. Every forced IDR also starts a sequence: SPS and PPS in front, frame
+/// number 0.
+fn consecutive_idrs_are_distinct_pictures(enc: Which, dec: Which) {
+    let out = r(640, 368);
+    let mut e = open(enc, &config(out, Preset::P720, FrameRate::Fps60));
+    let mut d = decoder_for(dec);
+    let mut ids = Vec::new();
+    for t in 0..12 {
+        if matches!(t, 4 | 5 | 6 | 9) {
+            e.request_keyframe();
+        }
+        let au = encode(e.as_mut(), out, t);
+        assert_well_formed(&au, &format!("frame {t}"));
+        if au.keyframe {
+            let (frame_num, id) = idr_slice_ids(&au.data);
+            assert_eq!(frame_num, 0, "frame {t}: an IDR has frame_num 0");
+            ids.push((t, id));
+        }
+        decode_good(&mut d, &au, &frame(out, t), &format!("frame {t}"));
+    }
+    let at: Vec<u32> = ids.iter().map(|(t, _)| *t).collect();
+    assert_eq!(
+        at,
+        vec![0, 4, 5, 6, 9],
+        "IDR exactly where it was asked for"
+    );
+    for pair in ids.windows(2) {
+        assert_ne!(
+            pair[0].1, pair[1].1,
+            "the IDRs at frames {} and {} have the same idr_pic_id {}",
+            pair[0].0, pair[1].0, pair[0].1
+        );
+    }
+}
+
+/// A requested IDR starts a new period: the next periodic IDR comes one
+/// interval after it, not at the old schedule.
+fn a_requested_idr_moves_the_next_periodic_one(enc: Which, dec: Which) {
+    let out = r(320, 192);
+    // 2 s at 30 fps: every 60 frames.
+    let mut e = open(enc, &config(out, Preset::P720, FrameRate::Fps30));
+    let mut d = decoder_for(dec);
+    let mut idr = Vec::new();
+    for t in 0..75 {
+        if t == 10 {
+            e.request_keyframe();
+        }
+        let au = encode(e.as_mut(), out, t);
+        assert_well_formed(&au, &format!("frame {t}"));
+        if au.keyframe {
+            idr.push(t);
+        }
+        decode_good(&mut d, &au, &frame(out, t), &format!("frame {t}"));
+    }
+    assert_eq!(
+        idr,
+        vec![0, 10, 70],
+        "the period counts from the requested IDR"
+    );
+}
+
 macro_rules! cases {
     (
         all: [$($case:ident),* $(,)?],
@@ -427,9 +490,12 @@ cases!(
         a_late_joiner_waits_for_an_idr_and_then_decodes,
         a_lost_frame_heals_at_the_next_idr,
         a_scene_cut_does_not_cause_an_unrequested_idr,
+        a_requested_idr_moves_the_next_periodic_one,
     ],
-    vaapi_encoder_bug: [],
-    vaapi_reason: "no known VA-API encoder bug",
+    vaapi_encoder_bug: [consecutive_idrs_are_distinct_pictures],
+    vaapi_reason: "known issue: every VA-API IDR carries idr_pic_id 0 (seen with Mesa on an RX 9060 XT), \
+although the vendor patch passes alternating values in the slice parameter, so two IDRs in a row \
+break H.264 7.4.3 on the wire; cros-codecs and openh264 still decode them. Run with --ignored to see it.",
     software_encoder_bug: [],
     software_reason: "no known openh264 bug",
 );
