@@ -12,11 +12,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use quinn::crypto::rustls::QuicClientConfig;
-use quinn::{Connection, Endpoint, RecvStream, SendStream};
+use quinn::{Connection, Endpoint, EndpointConfig, RecvStream, SendStream};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
+use socket2::{Domain, Protocol, Socket, Type};
 use v6cast_net::tls::{ALPN, SERVER_NAME};
 use v6cast_net::{Client, ClientConfig, GroupToken, Server, ServerConfig, TransportSettings};
 use v6cast_protocol::control::FRAME_PREFIX_LEN;
@@ -190,7 +191,20 @@ impl RawPeer {
         tls.alpn_protocols = vec![ALPN.to_vec()];
         let crypto = QuicClientConfig::try_from(tls).expect("QUIC client crypto");
         let config = quinn::ClientConfig::new(Arc::new(crypto));
-        let endpoint = Endpoint::client(SocketAddr::V6(loopback())).expect("raw endpoint");
+        // Same socket setup as the real client. `Endpoint::client` would make the
+        // socket dual-stack, which Windows refuses to bind to `[::1]` (error 10022).
+        let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).expect("socket");
+        socket.set_only_v6(true).expect("IPV6_V6ONLY");
+        socket
+            .bind(&SocketAddr::V6(loopback()).into())
+            .expect("bind raw endpoint on [::1]");
+        let endpoint = Endpoint::new(
+            EndpointConfig::default(),
+            None,
+            socket.into(),
+            Arc::new(quinn::TokioRuntime),
+        )
+        .expect("raw endpoint");
         let connection = within(
             "raw QUIC handshake",
             endpoint
