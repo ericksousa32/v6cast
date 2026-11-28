@@ -32,6 +32,12 @@ cros-libva 0.0.12, so there is no newer release to use instead.
   decode latency (5 at 1080p) that the spec's inferred DPB size would add.
 - `src/codec/h264/dpb.rs`: `Dpb::bump_all_if_low_delay` outputs pictures as
   soon as they are decoded when the reorder depth is 0.
+- `src/encoder/stateless/predictor.rs`: a forced keyframe resets the frame
+  counter, so it starts a new sequence and is a real IDR with SPS/PPS. Upstream
+  only made the first frame of each period an IDR and sent a plain I frame (no
+  parameter sets) for forced keyframes, which late joiners cannot start from.
+- `src/encoder/stateless/h264/predictor.rs`: IDRs alternate `idr_pic_id`
+  between 0 and 1, so two IDRs in a row are distinct pictures (H.264 7.4.3).
 - `src/lib.rs`: same lint allowance as above.
 - The `test_data` directories and the `test/` and `ci/` folders were removed
   (about 3 MB); they are only used by the crate's own tests.
@@ -42,4 +48,5 @@ cros-libva 0.0.12, so there is no newer release to use instead.
   an R8 buffer and describes it as NV12 instead.
 - Mesa's encoder leaves slice NAL headers at 0 and cros-codecs writes a plain
   Baseline SPS; `v6cast-media/src/codec/h264.rs` (`repair_vaapi_stream`)
-  repairs the encoded stream.
+  repairs the encoded stream. It marks an I slice as IDR only when its access
+  unit carries an SPS (cros-codecs writes one with every IDR, and only then).

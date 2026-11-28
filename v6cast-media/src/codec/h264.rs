@@ -103,8 +103,11 @@ pub fn slice_type(payload: &[u8]) -> Option<u32> {
 ///    `nal_unit_type` from the application's packed slice header. cros-codecs
 ///    does not send one, so Mesa writes a zero slice NAL header byte: type 0,
 ///    which no valid stream contains. Every picture is a reference in our
-///    low-delay streams, so I slices become IDR (`0x65`, cros-codecs only
-///    produces IDR intra frames) and other slices non-IDR references (`0x41`).
+///    low-delay streams. An I slice becomes an IDR slice (`0x65`) only when its
+///    access unit carries an SPS, which cros-codecs writes in front of every IDR
+///    and only there; every other slice, I or P, becomes a non-IDR reference
+///    slice (`0x41`). The IDR slice header syntax itself comes from Mesa, which
+///    knows from the picture parameters whether the picture is an IDR.
 /// 2. The stream is encoded with VA's Constrained Baseline profile, but the
 ///    SPS carries `profile_idc` 66 with no constraint flags, which decoders
 ///    (cros-codecs among them) refuse as plain Baseline. `constraint_set0` and
@@ -113,6 +116,7 @@ pub fn slice_type(payload: &[u8]) -> Option<u32> {
 ///
 /// Returns how many NAL units were changed.
 pub fn repair_vaapi_stream(annex_b: &mut [u8]) -> usize {
+    let starts_sequence = nal_unit_types(annex_b).contains(&NAL_SPS);
     let mut fixed = 0;
     let mut i = 0;
     while i + 4 <= annex_b.len() {
@@ -120,7 +124,7 @@ pub fn repair_vaapi_stream(annex_b: &mut [u8]) -> usize {
             let h = i + 3;
             if annex_b[h] == 0 {
                 annex_b[h] = match slice_type(&annex_b[h + 1..]) {
-                    Some(2 | 4) => 0x65,
+                    Some(2 | 4) if starts_sequence => 0x65,
                     _ => 0x41,
                 };
                 fixed += 1;
@@ -206,6 +210,10 @@ mod tests {
         assert_eq!(repair_vaapi_stream(&mut au), 2);
         assert_eq!(nal_unit_types(&au), vec![NAL_SPS, NAL_PPS, NAL_IDR]);
         assert_eq!(&au[4..8], &[0x67, 0x42, 0xc0, 0x20]);
+        // An I slice without parameter sets is not an IDR.
+        let mut i_slice = vec![0, 0, 0, 1, 0x00, 0x88, 0x81, 0x00];
+        assert_eq!(repair_vaapi_stream(&mut i_slice), 1);
+        assert_eq!(nal_unit_types(&i_slice), vec![1]);
         let mut p = vec![0, 0, 0, 0, 1, 0x00, 0x9a, 0x00, 0x00, 0x7f];
         assert_eq!(repair_vaapi_stream(&mut p), 1);
         assert_eq!(p[5], 0x41);

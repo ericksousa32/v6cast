@@ -42,6 +42,9 @@ pub(crate) struct LowDelayH264Delegate {
 
     /// Encoder config
     config: EncoderConfig,
+    /// v6cast patch: `idr_pic_id` of the next IDR. Two IDRs in a row must use
+    /// different values (H.264 7.4.3); upstream always sent 0.
+    next_idr_pic_id: u16,
 }
 
 pub(crate) type LowDelayH264<Picture, Reference> = LowDelay<
@@ -64,6 +67,7 @@ impl<Picture, Reference> LowDelayH264<Picture, Reference> {
                 update_params_sets: false,
                 sps: None,
                 pps: None,
+                next_idr_pic_id: 0,
             },
             tunings_queue: Default::default(),
             _phantom: Default::default(),
@@ -150,11 +154,16 @@ impl<Picture, Reference>
             is_reference: IsReference::ShortTerm,
         };
 
-        let header = SliceHeaderBuilder::new(&pps)
+        let mut header = SliceHeaderBuilder::new(&pps)
             .slice_type(SliceType::I)
             .first_mb_in_slice(0)
-            .pic_order_cnt_lsb(dpb_meta.poc)
-            .build();
+            .pic_order_cnt_lsb(dpb_meta.poc);
+        if idr {
+            // v6cast patch: alternate idr_pic_id, see `next_idr_pic_id`.
+            header = header.idr_pic_id(self.delegate.next_idr_pic_id);
+            self.delegate.next_idr_pic_id ^= 1;
+        }
+        let header = header.build();
 
         let mut headers = vec![];
         if idr || self.delegate.update_params_sets {

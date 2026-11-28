@@ -416,15 +416,12 @@ cases!(
         a_frame_of_the_wrong_size_is_refused_and_the_encoder_goes_on,
         the_requested_idr_survives_a_refused_frame,
         hard_content_never_makes_the_encoder_skip_a_frame,
-    ],
-    vaapi_encoder_bug: [
         idr_on_demand,
         a_late_joiner_waits_for_an_idr_and_then_decodes,
         a_lost_frame_heals_at_the_next_idr,
     ],
-    vaapi_reason: "known bug: after VaapiEncoder::request_keyframe the encoder emits a non-IDR I slice \
-(cros-codecs passes idr = (counter == 0)) with no SPS/PPS, and repair_vaapi_stream relabels it \
-NAL type 5, so decoders reject it. Run with --ignored to see it.",
+    vaapi_encoder_bug: [],
+    vaapi_reason: "no known VA-API encoder bug",
     software_encoder_bug: [a_scene_cut_does_not_cause_an_unrequested_idr],
     software_reason: "known issue: openh264 in ScreenContentRealTime mode forces scene change \
 detection on (it logs 'change bEnableSceneChangeDetect as true'), so a hard cut makes it insert an \

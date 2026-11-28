@@ -105,6 +105,13 @@ where
             self.pop_tunings()?;
 
             if self.counter == 0 || meta.force_keyframe {
+                // v6cast patch: a forced keyframe starts a new sequence, so it is a real
+                // IDR (with SPS/PPS) that a late joiner or a recovering decoder can start
+                // from. Upstream only made the first frame of a period an IDR and sent a
+                // plain I frame for forced keyframes, which needs earlier parameter sets.
+                if meta.force_keyframe {
+                    self.counter = 0;
+                }
                 log::trace!("Requesting keyframe/IDR for timestamp={}", meta.timestamp);
                 // If first frame in the sequence or forced IDR then clear references and create
                 // keyframe request.
