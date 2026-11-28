@@ -28,8 +28,15 @@ cros-libva 0.0.12, so there is no newer release to use instead.
   `VA_STATUS_ERROR_RESOLUTION_NOT_SUPPORTED`, and the library then panicked.
 - `src/decoder/stateless/h264.rs`: Baseline streams (profile_idc 66, no B
   slices) get a reorder depth of 0, and an access unit delimiter finishes the
-  current picture. Together with the next patch this removes up to 16 frames of
-  decode latency (5 at 1080p) that the spec's inferred DPB size would add.
+  current picture. Together with the next patch this removes the decode latency
+  that the spec's inferred reorder depth (the whole DPB, up to 16 frames) would
+  add. openh264 streams do not need the reorder part: their SPS has VUI
+  `bitstream_restriction` with `max_num_reorder_frames = 0`. VA-API streams do:
+  their SPS has VUI without `bitstream_restriction`, so the inferred reorder
+  depth is the DPB size (4 at 1080p). Without the patch our VA-API stream still
+  decoded with zero delay in the 1080p test, but through DPB behaviour we have
+  not traced (every picture has POC 0), so the patch stays as the guarantee;
+  other Baseline encoders without `bitstream_restriction` need it too.
 - `src/codec/h264/dpb.rs`: `Dpb::bump_all_if_low_delay` outputs pictures as
   soon as they are decoded when the reorder depth is 0.
 - `src/encoder/stateless/predictor.rs`: a forced keyframe resets the frame
