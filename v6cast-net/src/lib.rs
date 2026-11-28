@@ -9,6 +9,7 @@
 //!   skips frames instead of delaying the others.
 //! * [`discovery`]: stable IPv6 global address of the active interface and a
 //!   monitor that publishes the endpoint when the prefix or interface changes.
+//! * [`telemetry`]: RTT, loss, jitter and bandwidth for the TelemetryReport.
 
 #![forbid(unsafe_code)]
 
@@ -17,6 +18,7 @@ mod endpoint;
 pub mod error;
 pub mod fanout;
 mod session;
+pub mod telemetry;
 pub mod tls;
 mod token;
 
@@ -25,4 +27,5 @@ pub use endpoint::{Client, ClientConfig, Server, ServerConfig, TransportSettings
 pub use error::{close_code, NetError, Result};
 pub use fanout::{BroadcastReport, DatagramSink, FanOut, SubscriberId, SubscriberStats};
 pub use session::Session;
+pub use telemetry::{PathSnapshot, ReceiverTelemetry, SequenceTracker};
 pub use token::GroupToken;
