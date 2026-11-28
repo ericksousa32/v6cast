@@ -20,7 +20,17 @@ default = []
 # VA-API hardware H.264 (AMD/Intel, Linux). Needs libva, libgbm and libdrm
 # development files at build time.
 vaapi = ["dep:cros-codecs", "dep:gbm"]
+# Screen and window capture through the XDG Desktop Portal and PipeWire
+# (Linux). Needs libpipewire-0.3 and clang (bindgen) at build time.
+pipewire = ["dep:pipewire", "dep:ashpd", "dep:tokio"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 cros-codecs = { version = "0.0.6", features = ["vaapi"], optional = true }
 gbm = { version = "0.15.0", default-features = false, optional = true }
+pipewire = { version = "0.10.1", optional = true }
+ashpd = { version = "0.14.3", default-features = false, features = ["tokio", "screencast"], optional = true }
+tokio = { version = "1.54.1", features = ["rt-multi-thread"], optional = true }
+
+[[example]]
+name = "capture_portal"
+required-features = ["pipewire"]

@@ -7,9 +7,12 @@
 //!   openh264 software fallback.
 //! * `vaapi` (Linux, `vaapi` feature): VA-API hardware H.264 encode and decode.
 //! * [`render`]: wgpu renderer with an aspect-ratio-preserving viewport.
+//! * [`capture`]: monitor and window capture (Linux portal + PipeWire with the
+//!   `pipewire` feature), delivering scaled I420 frames with monotonic timestamps.
 
 #![forbid(unsafe_code)]
 
+pub mod capture;
 pub mod codec;
 pub mod frame;
 pub mod render;
