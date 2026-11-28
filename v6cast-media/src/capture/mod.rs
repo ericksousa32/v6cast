@@ -177,6 +177,10 @@ impl FrameClock {
 pub struct ScreenCapture {
     #[cfg(all(target_os = "linux", feature = "pipewire"))]
     inner: linux::Session,
+    /// Without capture support no value can exist, inside or outside the
+    /// crate; `start` is the only constructor.
+    #[cfg(not(all(target_os = "linux", feature = "pipewire")))]
+    never: std::convert::Infallible,
 }
 
 impl ScreenCapture {
@@ -203,7 +207,7 @@ impl ScreenCapture {
         }
         #[cfg(not(all(target_os = "linux", feature = "pipewire")))]
         {
-            unreachable!("ScreenCapture cannot be constructed without capture support")
+            match self.never {}
         }
     }
 
@@ -216,7 +220,7 @@ impl ScreenCapture {
         #[cfg(not(all(target_os = "linux", feature = "pipewire")))]
         {
             let _ = timeout;
-            Err(CaptureError::Unsupported)
+            match self.never {}
         }
     }
 
@@ -228,7 +232,7 @@ impl ScreenCapture {
         }
         #[cfg(not(all(target_os = "linux", feature = "pipewire")))]
         {
-            0
+            match self.never {}
         }
     }
 }
