@@ -58,7 +58,11 @@ async fn wrong_token_is_closed_at_once_and_never_surfaces_as_a_session() {
     let addr = server.local_addr().unwrap();
 
     let started = Instant::now();
-    let result = within("wrong-token connect", client("wrong horse").connect(addr)).await;
+    let result = within(
+        "wrong-token connect",
+        client("wrong horse, wrong group").connect(addr),
+    )
+    .await;
     assert!(matches!(result, Err(NetError::AuthRejected)), "{result:?}");
     // Closed by the rejection, not by the timeout that is 5 s away.
     assert!(
@@ -298,7 +302,9 @@ async fn failed_attempts_do_not_stop_good_peers_from_connecting() {
                 peer.close_code().await == u64::from(close_code::AUTH_TIMEOUT)
             } else {
                 matches!(
-                    client(&format!("guess {i}")).connect(addr).await,
+                    client(&format!("wrong guess number {i:02}"))
+                        .connect(addr)
+                        .await,
                     Err(NetError::AuthRejected)
                 )
             }

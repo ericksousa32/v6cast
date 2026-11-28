@@ -28,4 +28,4 @@ pub use error::{close_code, NetError, Result};
 pub use fanout::{BroadcastReport, DatagramSink, FanOut, SubscriberId, SubscriberStats};
 pub use session::Session;
 pub use telemetry::{PathSnapshot, ReceiverTelemetry, SequenceTracker};
-pub use token::GroupToken;
+pub use token::{GroupToken, MIN_TOKEN_LEN};

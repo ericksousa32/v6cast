@@ -411,8 +411,8 @@ mod tests {
 
         let mut server = server_with(TransportSettings::default());
         let addr = server.local_addr().unwrap();
-        let c1 = client("correct horse");
-        let c2 = client("correct horse");
+        let c1 = client("correct horse battery staple");
+        let c2 = client("correct horse battery staple");
         let v1 = c1.connect(addr).await.unwrap();
         let v2 = c2.connect(addr).await.unwrap();
         let fan = FanOut::new();

@@ -23,7 +23,7 @@ use v6cast_net::{Client, ClientConfig, GroupToken, Server, ServerConfig, Transpo
 use v6cast_protocol::control::FRAME_PREFIX_LEN;
 use v6cast_protocol::ControlMessage;
 
-pub const TOKEN: &str = "friends only";
+pub const TOKEN: &str = "friends only, nobody else";
 
 /// How long any single network step may take before the test fails instead of
 /// hanging. Generous: nothing on loopback comes close.

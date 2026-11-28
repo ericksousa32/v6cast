@@ -419,7 +419,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn server_with(transport: TransportSettings) -> Server {
-        let mut config = ServerConfig::new(loopback(), token("correct horse"));
+        let mut config = ServerConfig::new(loopback(), token("correct horse battery staple"));
         config.transport = transport;
         config.name = "streamer".into();
         Server::bind(config).unwrap()
@@ -435,7 +435,7 @@ pub(crate) mod tests {
     /// Server and an authenticated session on each side.
     pub(crate) async fn pair() -> (Server, Client, Session, Session) {
         let mut server = server_with(TransportSettings::default());
-        let client = client("correct horse");
+        let client = client("correct horse battery staple");
         let viewer = client.connect(server.local_addr().unwrap()).await.unwrap();
         let streamer = server.accept().await.unwrap();
         (server, client, streamer, viewer)
@@ -490,7 +490,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn wrong_token_is_rejected_immediately() {
         let mut server = server_with(TransportSettings::default());
-        let intruder = client("wrong horse");
+        let intruder = client("wrong horse battery staple");
         let started = Instant::now();
         let result = intruder.connect(server.local_addr().unwrap()).await;
         assert!(matches!(result, Err(NetError::AuthRejected)), "{result:?}");
@@ -503,7 +503,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn empty_token_is_rejected() {
         let server = server_with(TransportSettings::default());
-        let raw = client("unused")
+        let raw = client("unused token for raw peers")
             .connect_raw(server.local_addr().unwrap())
             .await
             .unwrap();
@@ -525,7 +525,7 @@ pub(crate) mod tests {
             auth_timeout: Duration::from_millis(200),
             ..TransportSettings::default()
         });
-        let raw = client("unused")
+        let raw = client("unused token for raw peers")
             .connect_raw(server.local_addr().unwrap())
             .await
             .unwrap();
@@ -548,7 +548,10 @@ pub(crate) mod tests {
             vec![0, 0, 0, 3, 0xee, 1, 2],
         ];
         for bytes in cases {
-            let raw = client("unused").connect_raw(addr).await.unwrap();
+            let raw = client("unused token for raw peers")
+                .connect_raw(addr)
+                .await
+                .unwrap();
             let _streams = send_raw(&raw, &bytes).await;
             assert_eq!(
                 close_code_of(&raw).await,
@@ -560,13 +563,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn right_token_with_other_version_is_refused() {
         let server = server_with(TransportSettings::default());
-        let raw = client("unused")
+        let raw = client("unused token for raw peers")
             .connect_raw(server.local_addr().unwrap())
             .await
             .unwrap();
         let hello = ControlMessage::Hello(Hello {
             protocol_version: CONTROL_VERSION + 1,
-            token: b"correct horse".to_vec(),
+            token: b"correct horse battery staple".to_vec(),
             peer_name: String::new(),
         });
         let _streams = send_raw(&raw, &hello.encode_frame().unwrap()).await;
@@ -580,8 +583,14 @@ pub(crate) mod tests {
     async fn every_client_gets_its_own_session() {
         let mut server = server_with(TransportSettings::default());
         let addr = server.local_addr().unwrap();
-        let a = client("correct horse").connect(addr).await.unwrap();
-        let b = client("correct horse").connect(addr).await.unwrap();
+        let a = client("correct horse battery staple")
+            .connect(addr)
+            .await
+            .unwrap();
+        let b = client("correct horse battery staple")
+            .connect(addr)
+            .await
+            .unwrap();
         let s1 = server.accept().await.unwrap();
         let s2 = server.accept().await.unwrap();
         assert_ne!(a.session_id(), b.session_id());
@@ -607,7 +616,7 @@ pub(crate) mod tests {
         ));
         // A new client is refused at once instead of waiting for the idle timeout.
         let started = Instant::now();
-        let late = client("correct horse").connect(addr).await;
+        let late = client("correct horse battery staple").connect(addr).await;
         assert!(late.is_err(), "connected to a dropped server");
         assert!(
             started.elapsed() < Duration::from_secs(3),
