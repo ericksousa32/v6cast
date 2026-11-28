@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "v6cast: v6cast-protocol crate (skeleton)"
+description = "v6cast wire format: media datagram header, control messages and fragmentation"
 
 [dependencies]
+thiserror = "2.0.21"
