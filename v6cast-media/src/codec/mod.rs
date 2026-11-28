@@ -18,6 +18,7 @@ use thiserror::Error;
 use crate::frame::{FrameError, YuvFrame};
 use crate::scale::{FrameRate, Preset, Resolution, VideoProfile};
 
+pub mod h264;
 pub mod software;
 
 /// Which implementation runs the codec.
@@ -237,8 +238,14 @@ pub fn probe() -> Vec<BackendCaps> {
     caps
 }
 
-/// Hardware backends compiled into this build. None yet: VA-API is added on
-/// Linux behind the `vaapi` feature.
+/// Hardware backends compiled into this build and present on this machine.
+#[cfg(all(target_os = "linux", feature = "vaapi"))]
+fn hardware_caps() -> Vec<BackendCaps> {
+    crate::vaapi::probe().into_iter().collect()
+}
+
+/// Hardware backends compiled into this build: none without the `vaapi` feature.
+#[cfg(not(all(target_os = "linux", feature = "vaapi")))]
 fn hardware_caps() -> Vec<BackendCaps> {
     Vec::new()
 }
@@ -247,13 +254,22 @@ fn open_hardware_encoder(
     backend: Backend,
     config: &EncoderConfig,
 ) -> Result<Box<dyn VideoEncoder>, CodecError> {
-    let _ = (backend, config);
-    Err(CodecError::Unavailable("hardware encoder"))
+    match backend {
+        #[cfg(all(target_os = "linux", feature = "vaapi"))]
+        Backend::Vaapi => Ok(Box::new(crate::vaapi::VaapiEncoder::new(config)?)),
+        _ => {
+            let _ = config;
+            Err(CodecError::Unavailable("hardware encoder"))
+        }
+    }
 }
 
 fn open_hardware_decoder(backend: Backend) -> Result<Box<dyn VideoDecoder>, CodecError> {
-    let _ = backend;
-    Err(CodecError::Unavailable("hardware decoder"))
+    match backend {
+        #[cfg(all(target_os = "linux", feature = "vaapi"))]
+        Backend::Vaapi => Ok(Box::new(crate::vaapi::VaapiDecoder::new()?)),
+        _ => Err(CodecError::Unavailable("hardware decoder")),
+    }
 }
 
 fn software_encoder(config: &EncoderConfig) -> Result<Box<dyn VideoEncoder>, CodecError> {

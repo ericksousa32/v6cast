@@ -5,12 +5,15 @@
 //! * [`frame`]: I420 frames shared by scaler, codecs and renderer.
 //! * [`codec`]: H.264 encoder/decoder traits, backend selection and the
 //!   openh264 software fallback.
+//! * `vaapi` (Linux, `vaapi` feature): VA-API hardware H.264 encode and decode.
 
 #![forbid(unsafe_code)]
 
 pub mod codec;
 pub mod frame;
 pub mod scale;
+#[cfg(all(target_os = "linux", feature = "vaapi"))]
+pub mod vaapi;
 
 pub use codec::{
     open_decoder, open_encoder, Backend, BackendPreference, CodecError, EncodedFrame,

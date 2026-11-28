@@ -16,12 +16,13 @@ RUN dnf -y install curl ca-certificates \
  && chmod 0777 /cargo-home /cargo-target
 
 # Build tools and libraries for v6cast-media (capture, encode, render, audio).
+# mesa-libgbm-devel: VA-API frames are GBM buffers (cros-codecs links -lgbm).
 # Upgrade first: the base image's mesa packages can be out of step with the
 # repositories, which breaks the mesa-va-drivers swap below.
 RUN dnf -y upgrade --refresh \
  && dnf -y install \
         gcc gcc-c++ cmake nasm clang clang-devel pkgconf-pkg-config \
-        pipewire-devel libva-devel libva-utils alsa-lib-devel \
+        pipewire-devel libva-devel libva-utils alsa-lib-devel mesa-libgbm-devel \
         vulkan-loader mesa-vulkan-drivers vulkan-tools \
  && dnf clean all
 

@@ -12,3 +12,13 @@ v6cast-protocol = { path = "../v6cast-protocol" }
 openh264 = "0.9.10"
 thiserror = "2.0.21"
 tracing = "0.1.44"
+
+[features]
+default = []
+# VA-API hardware H.264 (AMD/Intel, Linux). Needs libva, libgbm and libdrm
+# development files at build time.
+vaapi = ["dep:cros-codecs", "dep:gbm"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cros-codecs = { version = "0.0.6", features = ["vaapi"], optional = true }
+gbm = { version = "0.15.0", default-features = false, optional = true }
