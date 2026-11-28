@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use common::*;
-use v6cast_net::{NetError, Session};
+use v6cast_net::{close_code, NetError, Session};
 use v6cast_protocol::control::MAX_CONTROL_FRAME;
 use v6cast_protocol::{
     Codec, ControlMessage, FrameRate, Hello, KeyframeRequest, Preset, PresetRequest, ProtocolError,
@@ -178,6 +178,35 @@ async fn hostile_frames_after_authentication_are_errors_not_panics_or_big_alloca
                 "{result:?}"
             );
         }
+    }
+}
+
+/// After authentication a malformed control frame closes the connection with
+/// PROTOCOL_VIOLATION, the same as before authentication: the stream cannot be
+/// resynchronised, so the peer must learn why the session ended.
+#[tokio::test]
+async fn malformed_control_data_after_authentication_closes_with_protocol_violation() {
+    if !ipv6_or_skip() {
+        return;
+    }
+    let cases: [(&str, &[u8]); 3] = [
+        ("length above the limit", &[0xff; 4]),
+        ("unknown type", &[0, 0, 0, 2, 0xee, 0]),
+        ("trailing bytes", &[0, 0, 0, 5, 0x12, 0, 9, 9, 9]),
+    ];
+    for (name, bytes) in cases {
+        let (_server, peer, mut send, _recv, session) = authenticated_raw_peer().await;
+        send.write_all(bytes).await.unwrap();
+        let result = within(name, session.recv_control()).await;
+        assert!(
+            matches!(result, Err(NetError::Protocol(_))),
+            "{name}: {result:?}"
+        );
+        assert_eq!(
+            peer.close_code().await,
+            u64::from(close_code::PROTOCOL_VIOLATION),
+            "{name}"
+        );
     }
 }
 

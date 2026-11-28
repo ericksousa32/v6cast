@@ -70,8 +70,19 @@ impl Session {
     ///
     /// Cancel-safe: dropping the future (in `tokio::select!` or a timeout) loses
     /// no bytes. A partly received frame stays buffered for the next call.
+    ///
+    /// A malformed frame cannot be skipped (the stream has no resync point), so
+    /// it closes the connection with [`close_code::PROTOCOL_VIOLATION`], as during
+    /// authentication, and returns [`NetError::Protocol`].
     pub async fn recv_control(&self) -> Result<ControlMessage> {
-        self.recv.lock().await.next().await
+        let result = self.recv.lock().await.next().await;
+        if let Err(NetError::Protocol(_)) = &result {
+            self.connection.close(
+                VarInt::from_u32(close_code::PROTOCOL_VIOLATION),
+                b"malformed control frame",
+            );
+        }
+        result
     }
 
     /// Queues a datagram without waiting. Fails when it exceeds
