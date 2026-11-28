@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use v6cast_protocol::fragment::MIN_DATAGRAM;
+use v6cast_protocol::fragment::{MIN_DATAGRAM, RESYNC_DISTANCE};
 use v6cast_protocol::media::MAX_FRAME_LEN;
 use v6cast_protocol::{
     decode_datagram, DropReason, Fragmenter, MediaFlags, MediaHeader, MediaKind, Push, Reassembler,
@@ -562,4 +562,184 @@ fn sender_restart_is_picked_up_quickly() {
         delivered_within_a_second > 0,
         "60 frames (one second at 60 fps) after a sender restart, none was delivered"
     );
+}
+
+/// A frame of the old stream is half received when the sender restarts. Fragments
+/// of the new stream must never be glued onto it, even when the new counter later
+/// reaches the same frame id with identical size, flags and timestamp.
+#[test]
+fn restart_with_a_pending_old_frame_never_mixes_the_two_streams() {
+    let now = Instant::now();
+    let mut r = Reassembler::default();
+    let old_data = vec![0xAA; 3_000];
+    let new_data = vec![0xBB; 3_000];
+
+    let mut old = Fragmenter::new(MediaKind::Video, IPV6_SAFE_DATAGRAM).unwrap();
+    for _ in 0..200 {
+        for d in fragments(&mut old, &[1u8; 100], MediaFlags::keyframe(), 0) {
+            r.push_datagram(&d, now);
+        }
+    }
+    // Frame 200 of the old stream: only its first fragment arrives.
+    let stale = fragments(&mut old, &old_data, MediaFlags::keyframe(), 0);
+    assert_eq!(stale.len(), 3);
+    assert_eq!(r.push_datagram(&stale[0], now), Push::Pending);
+
+    let mut new = Fragmenter::new(MediaKind::Video, IPV6_SAFE_DATAGRAM).unwrap();
+    let mut frame_200 = None;
+    for _ in 0..200 {
+        for d in fragments(&mut new, &[2u8; 100], MediaFlags::keyframe(), 0) {
+            r.push_datagram(&d, now);
+        }
+    }
+    for d in fragments(&mut new, &new_data, MediaFlags::keyframe(), 0) {
+        if let Push::Complete(frame) = r.push_datagram(&d, now) {
+            frame_200 = Some(frame);
+        }
+    }
+    let frame = frame_200.expect("frame 200 of the new stream completes");
+    assert_eq!(frame.frame_id, 200);
+    assert_eq!(
+        frame.data, new_data,
+        "old fragments leaked into the new stream"
+    );
+    assert_eq!(r.stats().resyncs, 1);
+}
+
+#[test]
+fn reordering_inside_the_resync_distance_never_triggers_a_resync() {
+    let now = Instant::now();
+    for seed in 1..=40u64 {
+        let mut rng = Rng::new(seed * 1_000 + 7);
+        let stream = build_stream(&mut rng, 400);
+        // A datagram moves at most 63 places, so no frame of a kind ends up 64 or
+        // more frames behind the newest one already delivered.
+        let arrival = disturb(
+            &mut rng,
+            &stream.datagrams,
+            [0, 5, 20][seed as usize % 3],
+            2,
+            64,
+        );
+
+        let mut reassembler = unlimited();
+        let mut model = Model::default();
+        for (i, d) in arrival.iter().enumerate() {
+            let want = model.expect(d);
+            let got = reassembler.push_datagram(d, now);
+            let same = matches!(
+                (&got, &want),
+                (Push::Dropped(DropReason::Late), Expect::Late)
+                    | (Push::Dropped(DropReason::Duplicate), Expect::Duplicate)
+                    | (Push::Pending, Expect::Pending)
+                    | (Push::Complete(_), Expect::Complete)
+            );
+            assert!(same, "seed {seed} datagram {i}: {got:?} vs {want:?}");
+        }
+        assert_eq!(reassembler.stats().resyncs, 0, "seed {seed}: false resync");
+    }
+}
+
+#[test]
+fn a_restart_in_the_first_resync_distance_is_dropped_as_late_then_recovers() {
+    // Documented limit: a restart less than RESYNC_DISTANCE frames into a stream is
+    // not recognised. The loss is bounded by that distance.
+    let now = Instant::now();
+    let mut r = Reassembler::default();
+    let mut old = Fragmenter::new(MediaKind::Video, IPV6_SAFE_DATAGRAM).unwrap();
+    for _ in 0..30 {
+        for d in fragments(&mut old, &[1u8; 100], MediaFlags::keyframe(), 0) {
+            r.push_datagram(&d, now);
+        }
+    }
+    let mut new = Fragmenter::new(MediaKind::Video, IPV6_SAFE_DATAGRAM).unwrap();
+    let mut delivered = Vec::new();
+    for _ in 0..100 {
+        for d in fragments(&mut new, &[2u8; 100], MediaFlags::keyframe(), 0) {
+            if let Push::Complete(frame) = r.push_datagram(&d, now) {
+                delivered.push(frame.frame_id);
+            }
+        }
+    }
+    assert_eq!(
+        delivered.first(),
+        Some(&30),
+        "frames 0..30 are late, 30 is next"
+    );
+    assert_eq!(delivered.len(), 70);
+    assert!(100 - delivered.len() < RESYNC_DISTANCE as usize);
+    assert_eq!(r.stats().resyncs, 0);
+}
+
+#[test]
+fn a_restart_of_one_media_kind_leaves_the_other_alone() {
+    let now = Instant::now();
+    let mut r = Reassembler::default();
+    let mut video = Fragmenter::new(MediaKind::Video, IPV6_SAFE_DATAGRAM).unwrap();
+    let mut audio = Fragmenter::new(MediaKind::Audio, 600).unwrap();
+    for _ in 0..500 {
+        for d in fragments(&mut video, &[1u8; 100], MediaFlags::keyframe(), 0) {
+            r.push_datagram(&d, now);
+        }
+        for d in fragments(&mut audio, &[1u8; 100], MediaFlags::default(), 0) {
+            r.push_datagram(&d, now);
+        }
+    }
+    // Only the audio side restarts.
+    let mut audio = Fragmenter::new(MediaKind::Audio, 600).unwrap();
+    let first = fragments(&mut audio, &[9u8; 100], MediaFlags::default(), 0);
+    assert!(matches!(r.push_datagram(&first[0], now), Push::Complete(_)));
+    assert_eq!(r.stats().resyncs, 1);
+    assert_eq!(r.last_delivered(MediaKind::Audio), Some(0));
+    assert_eq!(r.last_delivered(MediaKind::Video), Some(499));
+}
+
+#[test]
+fn far_behind_fragments_cannot_make_the_reassembler_grow() {
+    // Every fragment is far behind the last delivered frame, so each one triggers a
+    // resync. The memory limits must hold through any number of them.
+    let config = ReassemblyConfig {
+        max_partial_frames: 4,
+        max_buffered_bytes: 1 << 20,
+        max_frame_age: Duration::from_millis(500),
+    };
+    let mut r = Reassembler::new(config);
+    let now = Instant::now();
+    let mut rng = Rng::new(808);
+    let delivered_marker = MediaHeader {
+        kind: MediaKind::Video,
+        flags: MediaFlags::default(),
+        seq: 0,
+        frame_id: 1_000_000,
+        fragment_index: 0,
+        fragment_count: 1,
+        frame_len: 4,
+        timestamp_us: 0,
+    }
+    .encode_datagram(&[1; 4]);
+    assert!(matches!(
+        r.push_datagram(&delivered_marker, now),
+        Push::Complete(_)
+    ));
+
+    for i in 0..5_000u32 {
+        let frame_len = 1_100 * (1 + rng.below(8) as u32);
+        let count = frame_len.div_ceil(1_100) as u16;
+        let index = rng.below(u64::from(count)) as u16;
+        let header = MediaHeader {
+            kind: MediaKind::Video,
+            flags: MediaFlags::default(),
+            seq: i,
+            // Anywhere from 64 to ~1M frames behind, and sometimes across the wrap.
+            frame_id: 1_000_000u32.wrapping_sub(64 + rng.below(1_000_000) as u32),
+            fragment_index: index,
+            fragment_count: count,
+            frame_len,
+            timestamp_us: 0,
+        };
+        let (_, len) = v6cast_protocol::fragment::fragment_span(frame_len, count, index).unwrap();
+        r.push(&header, &vec![0u8; len], now);
+        assert!(r.buffered_bytes() <= config.max_buffered_bytes);
+        assert!(r.partial_frames() <= config.max_partial_frames);
+    }
 }
