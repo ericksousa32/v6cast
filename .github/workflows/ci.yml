@@ -36,3 +36,32 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  hardware-features:
+    name: vaapi and pipewire features (ubuntu-latest)
+    runs-on: ubuntu-latest
+    env:
+      V6CAST_REQUIRE_IPV6: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system libraries for VA-API and PipeWire
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libva-dev libgbm-dev libdrm-dev libclang-dev clang pkg-config \
+            libpipewire-0.3-dev libspa-0.2-dev
+
+      - name: Clippy (vaapi, pipewire)
+        run: cargo clippy -p v6cast-media --all-targets --features vaapi,pipewire -- -D warnings
+
+      - name: Test (vaapi, pipewire)
+        run: cargo test -p v6cast-media --features vaapi,pipewire

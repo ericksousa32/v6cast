@@ -5,6 +5,32 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "v6cast: v6cast-media crate (skeleton)"
+description = "v6cast media pipeline: presets and scaling, H.264 coding, rendering and capture"
 
 [dependencies]
+v6cast-protocol = { path = "../v6cast-protocol" }
+openh264 = "0.9.10"
+pollster = "1.0.3"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+wgpu = "30.0.2"
+
+[features]
+default = []
+# VA-API hardware H.264 (AMD/Intel, Linux). Needs libva, libgbm and libdrm
+# development files at build time.
+vaapi = ["dep:cros-codecs", "dep:gbm"]
+# Screen and window capture through the XDG Desktop Portal and PipeWire
+# (Linux). Needs libpipewire-0.3 and clang (bindgen) at build time.
+pipewire = ["dep:pipewire", "dep:ashpd", "dep:tokio"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cros-codecs = { version = "0.0.6", features = ["vaapi"], optional = true }
+gbm = { version = "0.15.0", default-features = false, optional = true }
+pipewire = { version = "0.10.1", features = ["v0_3_44"], optional = true }
+ashpd = { version = "0.14.3", default-features = false, features = ["tokio", "screencast"], optional = true }
+tokio = { version = "1.54.1", features = ["rt-multi-thread"], optional = true }
+
+[[example]]
+name = "capture_portal"
+required-features = ["pipewire"]

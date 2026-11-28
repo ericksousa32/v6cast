@@ -12,11 +12,13 @@ v6cast is being built in four stages (see the technical plan in the issue tracke
 | Stage | Scope | Status |
 |-------|-------|--------|
 | 1 | Network engine: wire format, QUIC over IPv6, group-token auth, IPv6 discovery, telemetry | Code done; the real Fedora–Windows test is not done yet |
-| 2 | Media pipeline: capture, scaling, H.264 encode/decode, local loopback | Not implemented |
+| 2A | Media pipeline on Linux: capture, scaling, H.264 encode/decode, rendering, conditional audio | Code done and tested in a container; live capture not yet tested on a real session |
+| 2B | Media pipeline on Windows, NVIDIA and Intel | Not started |
 | 3 | Runtime: connects the network engine to the media pipeline | Not implemented |
 | 4 | Graphical interface | Not implemented |
 
-Today the repository contains the network engine and empty skeletons for the other crates.
+Today the repository contains the network engine, the Linux media pipeline (see
+[Media pipeline](#media-pipeline)) and skeletons for the other crates.
 There is no working screen-sharing application yet.
 
 ## Supported platforms
@@ -32,7 +34,7 @@ The code is a Cargo workspace with five crates:
 |-------|------|-------|
 | `v6cast-protocol` | Binary wire format: media datagram header, control messages, frame fragmentation and reassembly. No I/O, no async. | Implemented |
 | `v6cast-net` | Network engine: QUIC (`quinn`) server and client over IPv6-only sockets, multi-viewer fan-out, IPv6 discovery, telemetry | Implemented |
-| `v6cast-media` | Screen/window capture, scaling, H.264 codec, local rendering | Skeleton (Stage 2) |
+| `v6cast-media` | Screen/window capture, scaling, H.264 codec, local rendering | Linux implemented (Stage 2A) |
 | `v6cast-runtime` | Ties the network and media crates together, session management | Skeleton (Stage 3) |
 | `v6cast-ui` | Graphical interface | Skeleton (Stage 4) |
 
@@ -103,6 +105,14 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+The hardware features of `v6cast-media` are opt-in and Linux-only (see
+[Media pipeline](#media-pipeline) for the system packages they need):
+
+```bash
+cargo clippy -p v6cast-media --all-targets --features vaapi,pipewire -- -D warnings
+cargo test -p v6cast-media --features vaapi,pipewire
+```
+
 ### What CI checks
 
 The workflow in `.github/workflows/ci.yml` runs on pushes to `main`, `dev` and `feat/**`,
@@ -112,6 +122,78 @@ and executes, in order:
 1. `cargo fmt --all --check`
 2. `cargo clippy --workspace --all-targets -- -D warnings`
 3. `cargo test --workspace`
+
+A second job, `hardware-features`, runs only on `ubuntu-latest`. It installs the VA-API,
+GBM, DRM, PipeWire and clang development packages and runs clippy and the tests of
+`v6cast-media` with the `vaapi` and `pipewire` features. Tests that need `/dev/dri` skip
+themselves on runners without it.
+
+## Media pipeline
+
+The `v6cast-media` crate (Linux, Stage 2A) contains these modules:
+
+- **Presets and scaler** (`scale`): 720p, 1080p, 1440p and Native (capped at 2.5K). The
+  source is scaled into the preset's box with its aspect ratio kept, never up and never
+  cropped. The maths uses integers only.
+- **H.264 abstraction** (`codec`): one encoder and decoder interface with automatic
+  backend choice. Hardware (VA-API) is tried first; if it is missing or fails while
+  running, the code switches to **openh264** (software, Constrained Baseline). Settings are
+  low-latency: no B-frames, one reference frame, IDR every 2 s or on request.
+- **VA-API** (`vaapi`, feature `vaapi`): hardware H.264 encode and decode on AMD and Intel,
+  built on the vendored `cros-codecs` and `cros-libva` crates (see
+  [`vendor/README.md`](vendor/README.md) for the patches and the reasons).
+- **Renderer** (`render`): a wgpu renderer that draws I420 frames centred, aspect ratio
+  kept, on black.
+- **Capture** (`capture`, feature `pipewire`): a monitor or a window through the XDG Desktop
+  Portal (ScreenCast) and PipeWire. Frames are delivered as scaled I420 with monotonic
+  timestamps; frames the consumer cannot take are dropped and counted.
+- **Audio** (`audio`, feature `pipewire`): a monitor shares the system output (loopback of
+  the default sink). A window shares only its application's audio when that can be found;
+  otherwise the stream carries silence and no error is raised.
+
+Features:
+
+| Feature | What it adds | Build needs (Linux) |
+|---------|--------------|---------------------|
+| `vaapi` | VA-API H.264 encode and decode | `libva`, `libgbm`, `libdrm` development files, `clang`, `pkg-config` |
+| `pipewire` | Portal screen/window capture and audio | `libpipewire-0.3` and `libspa-0.2` development files, `clang`, `pkg-config` |
+
+On Debian and Ubuntu the packages are `libva-dev libgbm-dev libdrm-dev libclang-dev clang
+pkg-config libpipewire-0.3-dev libspa-0.2-dev`. On Fedora, `libva-devel`, `mesa-libgbm-devel`,
+`libdrm-devel`, `clang-devel`, `clang`, `pkgconf-pkg-config` and `pipewire-devel`.
+
+### Hardware encode on Fedora
+
+Stock Fedora Mesa does not provide H.264 VA-API. To use the hardware encoder on the host,
+install `mesa-va-drivers-freeworld` from RPM Fusion. The build container already includes
+it. Check with `vainfo`: it should list `VAEntrypointEncSlice` for `H264`.
+
+### Manual capture test
+
+Automated tests cannot pick a screen, so there is a manual program,
+`v6cast-media/examples/capture_portal.rs`. Build it in the container:
+
+```bash
+dev/build-manual-tests.sh
+```
+
+This writes `target/manual/capture_portal`. Run it on the host, in your Wayland session
+(it needs only `libpipewire-0.3`, `libstdc++` and glibc, which a normal desktop has):
+
+```bash
+target/manual/capture_portal --window --preset 720p --seconds 10
+```
+
+The portal shows its own picker. The program writes `first-frame.y4m` and `capture.h264` to
+`v6cast-capture/` (or `--out`), and prints the frame rate, dropped frames and whether the
+timestamps were strictly increasing. Play the files with `mpv`.
+
+### Status
+
+- Done in code and tested in the container: presets, scaler, codec abstraction, VA-API
+  encode and decode, renderer, capture and audio planning.
+- Not yet tested: live capture on a real Wayland session, and the hardware encoder on
+  real hardware through the host. Windows, NVIDIA and Intel are Stage 2B.
 
 ## Isolated build environment
 
@@ -204,8 +286,8 @@ The menu names depend on the router, so follow its own documentation.
   late.
 - **No overlay fallback.** If IPv6 is not reachable end to end, v6cast does not connect.
   There is no relay or alternative transport.
-- **No application yet.** Stages 2 to 4 (capture, encoding, runtime, interface) are not
-  implemented. The Windows firewall example refers to a binary that does not exist yet.
+- **No application yet.** Stage 2B and stages 3 and 4 (Windows and other GPUs, runtime,
+  interface) are not implemented. The Windows firewall example refers to a binary that does not exist yet.
 
 ## Development
 
@@ -214,4 +296,5 @@ requests into `dev`.
 
 ## Licence
 
-See [LICENSE](LICENSE).
+See [LICENSE](LICENSE). Third-party components, including the vendored crates and their
+license files, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

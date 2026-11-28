@@ -14,3 +14,10 @@ edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/ericksousa32/v6cast"
 authors = ["Erick Sousa"]
+
+# VA-API stack (v6cast-media `vaapi` feature): cros-codecs 0.0.6 and its
+# cros-libva 0.0.12, vendored with small fixes for desktop Mesa and libva 2.23+.
+# The fixes are listed in vendor/README.md.
+[patch.crates-io]
+cros-libva = { path = "vendor/cros-libva" }
+cros-codecs = { path = "vendor/cros-codecs" }
