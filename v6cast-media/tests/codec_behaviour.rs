@@ -482,22 +482,27 @@ fn sides_under_16_pixels_are_an_error_not_a_panic() {
     }
 }
 
-/// WARNING: this test makes the GPU fault. A 200x100 stream through the VA-API
-/// encoder makes the AMD VCN ring report page faults and time out; the kernel
-/// resets the ring (`vcn_unified_0 ring reset succeeded`) and the Mesa driver
-/// aborts the whole process (SIGABRT, "context is lost"), so no fallback can
-/// catch it. 324x720 and larger work. Run it only on purpose:
-/// `cargo test --features vaapi -- --ignored a_small_window_does_not_fault_the_gpu`.
+/// A 200x100 stream through the VA-API encoder made the AMD VCN ring fault (the
+/// kernel reset the ring) and Mesa aborted the process, so no fallback could
+/// catch it. Streams below `VAAPI_MIN_ENCODE_RESOLUTION` now never reach the
+/// VA-API encoder: automatic selection picks openh264, and asking for hardware
+/// only is refused before any VA object is created. This test is safe by
+/// construction: it never opens a VA-API encoder below the minimum.
 #[cfg(all(target_os = "linux", feature = "vaapi"))]
 #[test]
-#[ignore = "known bug, and it faults the GPU video ring (the kernel resets it): VA-API encode of a 200x100 stream aborts the process"]
 fn a_small_window_does_not_fault_the_gpu() {
-    if !vaapi_available() {
-        return;
-    }
     let out = r(200, 100);
     let cfg = config(out, Preset::P720, FrameRate::Fps30);
+    assert!(
+        out.width < v6cast_media::codec::VAAPI_MIN_ENCODE_RESOLUTION.width,
+        "the case must stay below the VA-API minimum"
+    );
+    // Hardware only: refused up front, whether or not a GPU is present.
+    assert!(open_encoder(&cfg, BackendPreference::HardwareOnly).is_err());
+    assert!(v6cast_media::vaapi::VaapiEncoder::new(&cfg).is_err());
+    // Automatic: software, and the stream works.
     let mut enc = open_encoder(&cfg, BackendPreference::Auto).unwrap();
+    assert_eq!(enc.backend(), Backend::Software);
     let mut dec = open_decoder(BackendPreference::SoftwareOnly).unwrap();
     for t in 0..3 {
         let input = frame(out, t);

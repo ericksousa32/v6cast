@@ -220,7 +220,20 @@ pub struct BackendCaps {
     pub decode: bool,
     /// Largest encode size, when the backend reports one.
     pub max_resolution: Option<Resolution>,
+    /// Smallest encode size the backend is trusted with (see
+    /// [`VAAPI_MIN_ENCODE_RESOLUTION`]). Smaller streams go to software.
+    pub min_resolution: Option<Resolution>,
 }
+
+/// Smallest stream sent to the VA-API encoder; smaller ones use openh264.
+///
+/// A 200x100 stream through Mesa's VA-API encoder made the AMD VCN ring page
+/// fault and time out (the kernel reset the ring) and Mesa aborted the whole
+/// process, which no fallback can catch. 320x192 and 640x368 ran many times on
+/// the same GPU (RX 9060 XT) without a kernel event, as did every preset size.
+/// The minimum is therefore the smallest size known to work, on both sides,
+/// not a measured limit: nobody should search for the real one on a live GPU.
+pub const VAAPI_MIN_ENCODE_RESOLUTION: Resolution = Resolution::new(320, 192);
 
 impl BackendCaps {
     fn can_encode(&self, r: Resolution) -> bool {
@@ -228,6 +241,9 @@ impl BackendCaps {
             && self
                 .max_resolution
                 .is_none_or(|m| r.width <= m.width && r.height <= m.height)
+            && self
+                .min_resolution
+                .is_none_or(|m| r.width >= m.width && r.height >= m.height)
     }
 }
 
@@ -605,6 +621,23 @@ mod tests {
         assert_eq!(dec.backend(), Backend::Software);
         assert!(dec.take_keyframe_request());
         assert!(!dec.take_keyframe_request());
+    }
+
+    #[test]
+    fn hardware_size_limits_route_small_streams_to_software() {
+        let caps = BackendCaps {
+            backend: Backend::Vaapi,
+            encode: true,
+            decode: true,
+            max_resolution: Some(Resolution::new(4096, 4096)),
+            min_resolution: Some(VAAPI_MIN_ENCODE_RESOLUTION),
+        };
+        assert!(caps.can_encode(Resolution::new(320, 192)));
+        assert!(caps.can_encode(Resolution::new(2560, 1440)));
+        for r in [(200, 100), (318, 1080), (1920, 190), (4098, 1080)] {
+            assert!(!caps.can_encode(Resolution::new(r.0, r.1)), "{r:?}");
+        }
+        assert!(software::caps().can_encode(Resolution::new(16, 16)));
     }
 
     #[test]

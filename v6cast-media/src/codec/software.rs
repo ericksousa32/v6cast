@@ -36,6 +36,7 @@ pub(crate) fn caps() -> BackendCaps {
         encode: true,
         decode: true,
         max_resolution: None,
+        min_resolution: None,
     }
 }
 

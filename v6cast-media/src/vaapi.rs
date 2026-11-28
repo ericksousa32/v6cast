@@ -58,7 +58,7 @@ use cros_codecs::{BlockingMode, Fourcc, FrameLayout, PlaneLayout, Resolution as 
 use crate::codec::h264::{is_idr, level_for, repair_vaapi_stream};
 use crate::codec::{
     Backend, BackendCaps, CodecError, EncodedFrame, EncoderConfig, H264Profile, VideoDecoder,
-    VideoEncoder,
+    VideoEncoder, VAAPI_MIN_ENCODE_RESOLUTION,
 };
 use crate::frame::YuvFrame;
 use crate::scale::Resolution;
@@ -164,6 +164,7 @@ pub(crate) fn probe() -> Option<BackendCaps> {
         decode,
         // radeonsi and iHD accept 4096x4096, above the 2.5K ceiling we use.
         max_resolution: Some(Resolution::new(4096, 4096)),
+        min_resolution: Some(VAAPI_MIN_ENCODE_RESOLUTION),
     })
 }
 
@@ -235,6 +236,15 @@ pub struct VaapiEncoder {
 impl VaapiEncoder {
     pub fn new(config: &EncoderConfig) -> Result<Self, CodecError> {
         config.validate()?;
+        // Refused before any VA object exists: small streams can fault the GPU
+        // and abort the process (see VAAPI_MIN_ENCODE_RESOLUTION).
+        let r = config.resolution;
+        let min = VAAPI_MIN_ENCODE_RESOLUTION;
+        if r.width < min.width || r.height < min.height {
+            return Err(CodecError::Unavailable(
+                "VA-API encoder for streams below 320x192",
+            ));
+        }
         let cfg = config.clone();
         let (jobs, replies, thread) =
             spawn_worker("v6cast-vaapi-enc", move |ready, jobs, replies| {
