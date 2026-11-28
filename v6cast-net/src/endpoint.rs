@@ -180,9 +180,20 @@ impl Server {
     }
 }
 
+/// Dropping the server shuts it down: the endpoint is closed, so sessions
+/// accepted from it end and new clients are refused with `CONNECTION_REFUSED`
+/// instead of waiting for an accept that never comes. Keep the `Server` alive
+/// as long as its sessions.
+///
+/// quinn refuses new clients while the endpoint driver runs, which is as long
+/// as any of its connections still drains. Once everything is gone the UDP
+/// socket is closed, and a client that arrives later times out like with any
+/// closed UDP port.
 impl Drop for Server {
     fn drop(&mut self) {
         self.accept_task.abort();
+        self.endpoint
+            .close(VarInt::from_u32(close_code::NORMAL), b"server stopped");
     }
 }
 
@@ -579,6 +590,30 @@ pub(crate) mod tests {
         let mut client_ids = [a.session_id(), b.session_id()];
         client_ids.sort_unstable();
         assert_eq!(server_ids, client_ids);
+    }
+
+    #[tokio::test]
+    async fn dropped_server_refuses_new_clients() {
+        let (server, _client, streamer, _viewer) = pair().await;
+        let addr = server.local_addr().unwrap();
+        drop(server);
+        // The accepted session is closed with the server.
+        let reason = tokio::time::timeout(Duration::from_secs(2), streamer.closed())
+            .await
+            .expect("session outlived the server");
+        assert!(matches!(
+            reason,
+            NetError::ClosedByPeer { .. } | NetError::Connection(_)
+        ));
+        // A new client is refused at once instead of waiting for the idle timeout.
+        let started = Instant::now();
+        let late = client("correct horse").connect(addr).await;
+        assert!(late.is_err(), "connected to a dropped server");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "refusal took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
