@@ -9,4 +9,6 @@ description = "v6cast media pipeline: presets and scaling, H.264 coding, renderi
 
 [dependencies]
 v6cast-protocol = { path = "../v6cast-protocol" }
+openh264 = "0.9.10"
 thiserror = "2.0.21"
+tracing = "0.1.44"
