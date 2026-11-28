@@ -27,7 +27,15 @@
 //! * keeps at most [`ReassemblyConfig::max_partial_frames`] incomplete frames and
 //!   [`ReassemblyConfig::max_buffered_bytes`] bytes in total, evicting the oldest
 //!   incomplete frame first, and drops frames older than
-//!   [`ReassemblyConfig::max_frame_age`].
+//!   [`ReassemblyConfig::max_frame_age`];
+//! * resynchronises when a fragment is more than [`RESYNC_DISTANCE`] frames behind
+//!   the last delivered one: that only happens when the sender restarted its frame
+//!   counter (a new `Fragmenter`), because genuinely late fragments are at most
+//!   `max_frame_age` old. [`Reassembler::reset`] does the same on request.
+//!
+//! A restart within the first [`RESYNC_DISTANCE`] frames of a stream is not
+//! detected: its frames are dropped as late until the new counter passes the old
+//! one, at most [`RESYNC_DISTANCE`] frames (about one second at 60 fps).
 
 use std::time::{Duration, Instant};
 
@@ -56,6 +64,10 @@ pub fn fragment_span(frame_len: u32, count: u16, index: u16) -> Option<(usize, u
     }
     Some((offset, chunk.min(len - offset)))
 }
+
+/// A fragment this many frames (or more) behind the last delivered frame means
+/// the sender restarted its counter; see the module docs.
+pub const RESYNC_DISTANCE: u32 = 64;
 
 /// `a` is newer than `b` in wrapping (serial number) order.
 fn is_newer(a: u32, b: u32) -> bool {
@@ -197,6 +209,8 @@ pub struct ReassemblyStats {
     pub fragments_duplicate: u64,
     pub fragments_invalid: u64,
     pub fragments_too_large: u64,
+    /// Times a sender restart was detected and the kind's state was cleared.
+    pub resyncs: u64,
 }
 
 #[derive(Debug)]
@@ -266,6 +280,14 @@ impl Reassembler {
         self.partials.len()
     }
 
+    /// Forgets everything about `kind`: the next frame is accepted whatever its
+    /// id. Use it when the sender is known to have restarted its stream.
+    /// Incomplete frames of `kind` count as dropped.
+    pub fn reset(&mut self, kind: MediaKind) {
+        self.last_delivered[kind.index()] = None;
+        self.retain(|p| p.kind != kind);
+    }
+
     /// Last frame delivered for `kind`.
     pub fn last_delivered(&self, kind: MediaKind) -> Option<u32> {
         self.last_delivered[kind.index()]
@@ -296,7 +318,12 @@ impl Reassembler {
         }
         if let Some(last) = self.last_delivered[header.kind.index()] {
             if !is_newer(header.frame_id, last) {
-                return self.drop_fragment(DropReason::Late);
+                if last.wrapping_sub(header.frame_id) < RESYNC_DISTANCE {
+                    return self.drop_fragment(DropReason::Late);
+                }
+                // Far behind: the sender restarted its frame counter.
+                self.stats.resyncs += 1;
+                self.reset(header.kind);
             }
         }
         self.expire(now);
@@ -687,6 +714,70 @@ mod tests {
         assert_eq!(completed(&feed(&mut r, &vd, now)).len(), 1);
         assert_eq!(r.last_delivered(MediaKind::Audio), Some(0));
         assert_eq!(r.last_delivered(MediaKind::Video), Some(0));
+    }
+
+    fn single(f: &mut Fragmenter, byte: u8) -> Vec<u8> {
+        f.fragment(&[byte; 100], MediaFlags::keyframe(), 0)
+            .unwrap()
+            .remove(0)
+    }
+
+    #[test]
+    fn sender_restart_far_behind_resyncs_at_once() {
+        let now = Instant::now();
+        let mut r = Reassembler::default();
+        let mut old = Fragmenter::new(MediaKind::Video, MIN_DATAGRAM).unwrap();
+        for _ in 0..200 {
+            r.push_datagram(&single(&mut old, 1), now);
+        }
+        assert_eq!(r.last_delivered(MediaKind::Video), Some(199));
+        let mut new = Fragmenter::new(MediaKind::Video, MIN_DATAGRAM).unwrap();
+        assert!(matches!(
+            r.push_datagram(&single(&mut new, 2), now),
+            Push::Complete(Frame { frame_id: 0, .. })
+        ));
+        assert_eq!(r.stats().resyncs, 1);
+        assert_eq!(r.last_delivered(MediaKind::Video), Some(0));
+    }
+
+    #[test]
+    fn genuinely_late_fragments_do_not_resync() {
+        let now = Instant::now();
+        let mut r = Reassembler::default();
+        let mut f = Fragmenter::new(MediaKind::Video, MIN_DATAGRAM).unwrap();
+        let frames: Vec<Vec<u8>> = (0..=RESYNC_DISTANCE).map(|_| single(&mut f, 1)).collect();
+        r.push_datagram(frames.last().unwrap(), now);
+        // RESYNC_DISTANCE - 1 frames behind: late.
+        assert_eq!(
+            r.push_datagram(&frames[1], now),
+            Push::Dropped(DropReason::Late)
+        );
+        assert_eq!(r.stats().resyncs, 0);
+        // RESYNC_DISTANCE frames behind: treated as a restart.
+        assert!(matches!(
+            r.push_datagram(&frames[0], now),
+            Push::Complete(_)
+        ));
+        assert_eq!(r.stats().resyncs, 1);
+    }
+
+    #[test]
+    fn reset_forgets_one_kind_only() {
+        let now = Instant::now();
+        let mut r = Reassembler::default();
+        let mut v = Fragmenter::new(MediaKind::Video, MIN_DATAGRAM).unwrap();
+        let mut a = Fragmenter::new(MediaKind::Audio, MIN_DATAGRAM).unwrap();
+        r.push_datagram(&single(&mut v, 1), now);
+        r.push_datagram(&single(&mut a, 1), now);
+        // An incomplete video frame is pending when the reset happens.
+        let pending = v.fragment(&[3; 1000], MediaFlags::default(), 0).unwrap();
+        r.push_datagram(&pending[0], now);
+        r.reset(MediaKind::Video);
+        assert_eq!(r.last_delivered(MediaKind::Video), None);
+        assert_eq!(r.last_delivered(MediaKind::Audio), Some(0));
+        assert_eq!(r.partial_frames(), 0);
+        assert_eq!(r.buffered_bytes(), 0);
+        assert_eq!(r.stats().frames_dropped, 1);
     }
 
     #[test]

@@ -533,15 +533,13 @@ fn audio_loss_never_blocks_video() {
     assert_eq!(r.last_delivered(MediaKind::Audio), None);
 }
 
-// ── known problems, kept as executable reports ───────────────────────────────
+// ── sender restart ───────────────────────────────────────────────────────────
 
 /// After the sender's frame counter restarts at 0 (new `Fragmenter`, for example
-/// after the capture pipeline is rebuilt) a long-lived `Reassembler` drops every
-/// frame as late until the new counter passes the old one.
-///
-/// Run with `cargo test -p v6cast-protocol -- --ignored sender_restart`.
+/// after the capture pipeline is rebuilt) a long-lived `Reassembler` must pick up
+/// the new stream quickly instead of dropping every frame as late until the new
+/// counter passes the old one.
 #[test]
-#[ignore = "known issue: Reassembler has no resync after the sender's frame_id restarts"]
 fn sender_restart_is_picked_up_quickly() {
     let now = Instant::now();
     let mut r = Reassembler::default();
