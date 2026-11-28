@@ -23,7 +23,7 @@ use v6cast_protocol::control::MAX_PEER_NAME_LEN;
 use v6cast_protocol::{ControlMessage, Hello, HelloAck, CONTROL_VERSION};
 
 use crate::error::{close_code, NetError, Result};
-use crate::session::{read_message, write_message, Session};
+use crate::session::{write_message, ControlReader, Session};
 use crate::tls::{self, SERVER_NAME};
 use crate::token::GroupToken;
 
@@ -238,8 +238,10 @@ async fn authenticate(
     conn: &Connection,
     ctx: &AuthContext,
 ) -> std::result::Result<Session, Reject> {
-    let (mut send, mut recv) = conn.accept_bi().await.map_err(|_| PROTOCOL_VIOLATION)?;
-    let hello = match read_message(&mut recv).await {
+    let (mut send, recv) = conn.accept_bi().await.map_err(|_| PROTOCOL_VIOLATION)?;
+    // The reader moves into the Session with any bytes read past the Hello.
+    let mut recv = ControlReader::new(recv);
+    let hello = match recv.next().await {
         Ok(ControlMessage::Hello(hello)) => hello,
         Ok(_) | Err(NetError::Protocol(_)) => return Err(PROTOCOL_VIOLATION),
         // Stream closed early or connection lost: treat as a missing token.
@@ -359,9 +361,10 @@ impl Client {
     }
 
     async fn handshake(&self, conn: &Connection, hello: ControlMessage) -> Result<Session> {
-        let (mut send, mut recv) = conn.open_bi().await.map_err(NetError::from_connection)?;
+        let (mut send, recv) = conn.open_bi().await.map_err(NetError::from_connection)?;
         write_message(&mut send, &hello).await?;
-        let ack = match read_message(&mut recv).await? {
+        let mut recv = ControlReader::new(recv);
+        let ack = match recv.next().await? {
             ControlMessage::HelloAck(ack) => ack,
             _ => {
                 close(conn, close_code::PROTOCOL_VIOLATION, b"expected HelloAck");

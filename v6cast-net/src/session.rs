@@ -3,9 +3,8 @@
 use std::net::SocketAddr;
 
 use bytes::Bytes;
-use quinn::{Connection, Endpoint, ReadError, ReadExactError, RecvStream, SendStream, VarInt};
+use quinn::{Connection, Endpoint, ReadError, RecvStream, SendStream, VarInt};
 use tokio::sync::Mutex;
-use v6cast_protocol::control::FRAME_PREFIX_LEN;
 use v6cast_protocol::ControlMessage;
 
 use crate::error::{close_code, NetError, Result};
@@ -20,7 +19,7 @@ pub struct Session {
     session_id: u64,
     peer_name: String,
     send: Mutex<SendStream>,
-    recv: Mutex<RecvStream>,
+    recv: Mutex<ControlReader>,
     /// Client sessions keep their endpoint alive.
     _endpoint: Option<Endpoint>,
 }
@@ -31,7 +30,7 @@ impl Session {
         session_id: u64,
         peer_name: String,
         send: SendStream,
-        recv: RecvStream,
+        recv: ControlReader,
         endpoint: Option<Endpoint>,
     ) -> Self {
         Self {
@@ -68,8 +67,11 @@ impl Session {
     }
 
     /// Waits for the next control message.
+    ///
+    /// Cancel-safe: dropping the future (in `tokio::select!` or a timeout) loses
+    /// no bytes. A partly received frame stays buffered for the next call.
     pub async fn recv_control(&self) -> Result<ControlMessage> {
-        read_message(&mut *self.recv.lock().await).await
+        self.recv.lock().await.next().await
     }
 
     /// Queues a datagram without waiting. Fails when it exceeds
@@ -112,19 +114,43 @@ pub(crate) async fn write_message(send: &mut SendStream, msg: &ControlMessage) -
     })
 }
 
-pub(crate) async fn read_message(recv: &mut RecvStream) -> Result<ControlMessage> {
-    let mut prefix = [0u8; FRAME_PREFIX_LEN];
-    read_exact(recv, &mut prefix).await?;
-    // Validated before allocating, so a peer cannot ask for a huge buffer.
-    let len = ControlMessage::body_len(prefix)?;
-    let mut body = vec![0u8; len];
-    read_exact(recv, &mut body).await?;
-    Ok(ControlMessage::decode_body(&body)?)
+/// Reads control frames from the stream, keeping a partly received frame
+/// between calls so [`ControlReader::next`] is cancel-safe.
+///
+/// The only await point is `RecvStream::read`, which quinn documents as
+/// cancel-safe; received bytes are appended to the buffer before anything else
+/// can be cancelled. The buffer never holds more than one frame plus one read:
+/// `decode_frame` rejects a bad length prefix as soon as its four bytes are in.
+#[derive(Debug)]
+pub(crate) struct ControlReader {
+    stream: RecvStream,
+    buf: Vec<u8>,
 }
 
-async fn read_exact(recv: &mut RecvStream, buf: &mut [u8]) -> Result<()> {
-    recv.read_exact(buf).await.map_err(|e| match e {
-        ReadExactError::ReadError(ReadError::ConnectionLost(c)) => NetError::from_connection(c),
-        _ => NetError::ControlClosed,
-    })
+impl ControlReader {
+    const READ_CHUNK: usize = 4096;
+
+    pub(crate) fn new(stream: RecvStream) -> Self {
+        Self {
+            stream,
+            buf: Vec::new(),
+        }
+    }
+
+    pub(crate) async fn next(&mut self) -> Result<ControlMessage> {
+        loop {
+            if let Some((msg, used)) = ControlMessage::decode_frame(&self.buf)? {
+                self.buf.drain(..used);
+                return Ok(msg);
+            }
+            let mut chunk = [0u8; Self::READ_CHUNK];
+            let n = match self.stream.read(&mut chunk).await {
+                Ok(Some(n)) => n,
+                Ok(None) => return Err(NetError::ControlClosed),
+                Err(ReadError::ConnectionLost(c)) => return Err(NetError::from_connection(c)),
+                Err(_) => return Err(NetError::ControlClosed),
+            };
+            self.buf.extend_from_slice(&chunk[..n]);
+        }
+    }
 }

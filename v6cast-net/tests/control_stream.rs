@@ -211,15 +211,11 @@ async fn a_pending_recv_control_ends_when_the_peer_closes() {
     );
 }
 
-/// `Session::recv_control` loses the bytes it had already read when its future is
-/// dropped half-way, as happens inside `tokio::select!` or `tokio::time::timeout`.
-/// The next call then reads the middle of a frame and fails (or worse, decodes
-/// garbage). Control frames are small, so honest peers rarely split one, but a
-/// hostile or just unlucky one can.
-///
-/// Run with `cargo test -p v6cast-net --test control_stream -- --ignored cancel`.
+/// Dropping `Session::recv_control` half-way through a frame, as happens inside
+/// `tokio::select!` or `tokio::time::timeout`, must not lose the bytes already
+/// read: the next call has to finish the same frame. Control frames are small,
+/// so honest peers rarely split one, but a hostile or just unlucky one can.
 #[tokio::test]
-#[ignore = "known bug: Session::recv_control is not cancel-safe"]
 async fn recv_control_survives_being_cancelled_in_the_middle_of_a_frame() {
     if !ipv6_or_skip() {
         return;
