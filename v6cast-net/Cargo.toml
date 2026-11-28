@@ -5,6 +5,19 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "v6cast: v6cast-net crate (skeleton)"
+description = "v6cast network engine: QUIC over IPv6, group token auth, fan-out, discovery and telemetry"
 
 [dependencies]
+v6cast-protocol = { path = "../v6cast-protocol" }
+bytes = "1.12.2"
+quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rcgen = "0.14.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+socket2 = "0.6.5"
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
