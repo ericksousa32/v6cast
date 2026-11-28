@@ -6,11 +6,13 @@
 //! * [`codec`]: H.264 encoder/decoder traits, backend selection and the
 //!   openh264 software fallback.
 //! * `vaapi` (Linux, `vaapi` feature): VA-API hardware H.264 encode and decode.
+//! * [`render`]: wgpu renderer with an aspect-ratio-preserving viewport.
 
 #![forbid(unsafe_code)]
 
 pub mod codec;
 pub mod frame;
+pub mod render;
 pub mod scale;
 #[cfg(all(target_os = "linux", feature = "vaapi"))]
 pub mod vaapi;
@@ -20,4 +22,5 @@ pub use codec::{
     EncoderConfig, VideoDecoder, VideoEncoder,
 };
 pub use frame::YuvFrame;
+pub use render::{fit_viewport, Renderer, Viewport};
 pub use scale::{fit, fit_preset, Alignment, FrameRate, Preset, Resolution, VideoProfile};
