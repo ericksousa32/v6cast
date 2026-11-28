@@ -185,6 +185,15 @@ pub struct EncodedFrame {
     pub timestamp_us: u64,
 }
 
+/// Whether a keyframe request survives an encode: it was made and the encode
+/// did not produce an IDR (an error, no output, or a non-IDR frame).
+pub(crate) fn keyframe_still_pending(
+    requested: bool,
+    result: &Result<Option<EncodedFrame>, CodecError>,
+) -> bool {
+    requested && !matches!(result, Ok(Some(frame)) if frame.keyframe)
+}
+
 impl std::fmt::Debug for EncodedFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EncodedFrame")
@@ -204,7 +213,8 @@ pub trait VideoEncoder: Send {
         frame: &YuvFrame,
         timestamp_us: u64,
     ) -> Result<Option<EncodedFrame>, CodecError>;
-    /// The next encoded frame will be an IDR.
+    /// The next encoded frame will be an IDR. The request stays pending
+    /// through encodes that fail or produce no IDR.
     fn request_keyframe(&mut self);
     /// Changes the target bitrate. The next frame may be an IDR.
     fn set_bitrate(&mut self, bps: u32) -> Result<(), CodecError>;
@@ -466,6 +476,24 @@ impl VideoDecoder for FallbackDecoder {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_keyframe_request_survives_until_an_idr_comes_out() {
+        let frame = |keyframe| {
+            Ok(Some(EncodedFrame {
+                data: vec![0, 0, 0, 1, 0x65],
+                keyframe,
+                timestamp_us: 0,
+            }))
+        };
+        let failed = Err(CodecError::backend(Backend::Software, "boom"));
+        assert!(keyframe_still_pending(true, &failed));
+        assert!(keyframe_still_pending(true, &Ok(None)));
+        assert!(keyframe_still_pending(true, &frame(false)));
+        assert!(!keyframe_still_pending(true, &frame(true)));
+        assert!(!keyframe_still_pending(false, &failed));
+        assert!(!keyframe_still_pending(false, &Ok(None)));
+    }
+
     use super::*;
 
     fn config(w: u32, h: u32) -> EncoderConfig {

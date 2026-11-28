@@ -32,8 +32,8 @@ use openh264::formats::{YUVSlices, YUVSource};
 use openh264::OpenH264API;
 
 use super::{
-    Backend, BackendCaps, CodecError, EncodedFrame, EncoderConfig, H264Profile, VideoDecoder,
-    VideoEncoder,
+    keyframe_still_pending, Backend, BackendCaps, CodecError, EncodedFrame, EncoderConfig,
+    H264Profile, VideoDecoder, VideoEncoder,
 };
 use crate::frame::YuvFrame;
 use crate::scale::Resolution;
@@ -93,6 +93,28 @@ impl SoftwareEncoder {
             force_idr: true,
         })
     }
+
+    /// One encode call; keyframe requests are handled by the caller.
+    fn encode_frame(
+        &mut self,
+        frame: &YuvFrame,
+        timestamp_us: u64,
+    ) -> Result<Option<EncodedFrame>, CodecError> {
+        let r = frame.resolution();
+        let (w, h) = (r.width as usize, r.height as usize);
+        let source = YUVSlices::new((frame.y(), frame.u(), frame.v()), (w, h), (w, w / 2, w / 2));
+        let bitstream = self.encoder.encode(&source).map_err(err)?;
+        let frame_type = bitstream.frame_type();
+        let data = bitstream.to_vec();
+        if data.is_empty() || matches!(frame_type, FrameType::Skip | FrameType::Invalid) {
+            return Ok(None);
+        }
+        Ok(Some(EncodedFrame {
+            data,
+            keyframe: matches!(frame_type, FrameType::IDR),
+            timestamp_us,
+        }))
+    }
 }
 
 impl VideoEncoder for SoftwareEncoder {
@@ -115,23 +137,13 @@ impl VideoEncoder for SoftwareEncoder {
                 got: frame.resolution(),
             });
         }
-        if std::mem::take(&mut self.force_idr) {
+        let requested = std::mem::take(&mut self.force_idr);
+        if requested {
             self.encoder.force_intra_frame();
         }
-        let r = frame.resolution();
-        let (w, h) = (r.width as usize, r.height as usize);
-        let source = YUVSlices::new((frame.y(), frame.u(), frame.v()), (w, h), (w, w / 2, w / 2));
-        let bitstream = self.encoder.encode(&source).map_err(err)?;
-        let frame_type = bitstream.frame_type();
-        let data = bitstream.to_vec();
-        if data.is_empty() || matches!(frame_type, FrameType::Skip | FrameType::Invalid) {
-            return Ok(None);
-        }
-        Ok(Some(EncodedFrame {
-            data,
-            keyframe: matches!(frame_type, FrameType::IDR),
-            timestamp_us,
-        }))
+        let result = self.encode_frame(frame, timestamp_us);
+        self.force_idr = keyframe_still_pending(requested, &result);
+        result
     }
 
     fn request_keyframe(&mut self) {

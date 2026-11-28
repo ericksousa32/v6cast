@@ -57,8 +57,8 @@ use cros_codecs::{BlockingMode, Fourcc, FrameLayout, PlaneLayout, Resolution as 
 
 use crate::codec::h264::{is_idr, level_for, repair_vaapi_stream};
 use crate::codec::{
-    Backend, BackendCaps, CodecError, EncodedFrame, EncoderConfig, H264Profile, VideoDecoder,
-    VideoEncoder, VAAPI_MIN_ENCODE_RESOLUTION,
+    keyframe_still_pending, Backend, BackendCaps, CodecError, EncodedFrame, EncoderConfig,
+    H264Profile, VideoDecoder, VideoEncoder, VAAPI_MIN_ENCODE_RESOLUTION,
 };
 use crate::frame::YuvFrame;
 use crate::scale::Resolution;
@@ -269,6 +269,26 @@ impl VaapiEncoder {
             _thread: thread,
         })
     }
+
+    /// One round trip to the worker; keyframe requests are handled by the caller.
+    fn run_encode(
+        &mut self,
+        frame: &YuvFrame,
+        timestamp_us: u64,
+        keyframe: bool,
+    ) -> Result<Option<EncodedFrame>, CodecError> {
+        self.jobs
+            .send(EncodeJob::Encode {
+                frame: frame.clone(),
+                timestamp_us,
+                keyframe,
+            })
+            .map_err(|_| worker_gone())?;
+        match self.replies.recv().map_err(|_| worker_gone())? {
+            EncodeReply::Encoded(result) => result,
+            EncodeReply::Tuned(_) => Err(err("out-of-order reply")),
+        }
+    }
 }
 
 type VaEncoder = StatelessEncoder<
@@ -433,17 +453,9 @@ impl VideoEncoder for VaapiEncoder {
             });
         }
         let keyframe = std::mem::take(&mut self.force_keyframe);
-        self.jobs
-            .send(EncodeJob::Encode {
-                frame: frame.clone(),
-                timestamp_us,
-                keyframe,
-            })
-            .map_err(|_| worker_gone())?;
-        match self.replies.recv().map_err(|_| worker_gone())? {
-            EncodeReply::Encoded(result) => result,
-            EncodeReply::Tuned(_) => Err(err("out-of-order reply")),
-        }
+        let result = self.run_encode(frame, timestamp_us, keyframe);
+        self.force_keyframe = keyframe_still_pending(keyframe, &result);
+        result
     }
 
     fn request_keyframe(&mut self) {
