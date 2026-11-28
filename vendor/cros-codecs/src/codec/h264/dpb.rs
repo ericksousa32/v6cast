@@ -485,7 +485,6 @@ impl<T: Clone> Dpb<T> {
         }
     }
 
-    /// Bumps the DPB if needed. DPB bumping is described on C.4.5.3.
     /// v6cast patch: with a reorder depth of 0 (low-delay streams), output
     /// every picture waiting for output right away instead of when the DPB is
     /// full. Reference pictures stay in the DPB for prediction.
@@ -501,6 +500,7 @@ impl<T: Clone> Dpb<T> {
         pics
     }
 
+    /// Bumps the DPB if needed. DPB bumping is described on C.4.5.3.
     pub fn bump_as_needed(&mut self, current_pic: &PictureData) -> Vec<Option<T>> {
         let mut pics = vec![];
         while self.needs_bumping(current_pic) && self.len() >= self.max_num_reorder_frames {
