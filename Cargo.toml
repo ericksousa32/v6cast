@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "v6cast-protocol",
+    "v6cast-net",
+    "v6cast-media",
+    "v6cast-runtime",
+    "v6cast-ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/ericksousa32/v6cast"
+authors = ["Erick Sousa"]
