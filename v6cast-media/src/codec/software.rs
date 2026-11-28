@@ -2,10 +2,18 @@
 //!
 //! openh264 only produces Constrained Baseline, so [`H264Profile::Main`] falls
 //! back to it here. Settings: screen-content real-time mode, bitrate rate
-//! control, no frame skipping (the frame rate has priority over quality),
-//! no scene-change IDRs (keyframes are periodic or on request only), low
+//! control, no frame skipping (the frame rate has priority over quality), low
 //! complexity for latency. The IDR period counts from the last IDR, so a
 //! requested IDR also moves the next periodic one.
+//!
+//! Unrequested IDRs on scene cuts: in screen-content mode openh264 forces scene
+//! change detection on whatever the configuration says (it logs "change
+//! bEnableSceneChangeDetect as true"), so a hard cut, such as a new window or
+//! a full-screen switch, gets an IDR of its own on top of the periodic and
+//! requested ones. Keyframes are therefore not fully under the sender's
+//! control with this backend; the VA-API backend has no such IDRs. The
+//! camera-content mode would honour the setting but codes text and UI worse,
+//! so screen-content mode is kept.
 //!
 //! Frame skipping trade-off, measured on 720p30 screen-like content (static
 //! desktop plus a scrolling window): without skipping the output stays close
@@ -57,6 +65,8 @@ fn build(config: &EncoderConfig) -> Result<Encoder, CodecError> {
         .profile(profile)
         .complexity(Complexity::Low)
         .skip_frames(false)
+        // Ignored in screen-content mode: openh264 turns it back on (see the
+        // module docs). Kept for the other usage types.
         .scene_change_detect(false)
         .background_detection(false)
         .adaptive_quantization(false)
