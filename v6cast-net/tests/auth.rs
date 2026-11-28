@@ -8,7 +8,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::*;
-use v6cast_net::{close_code, NetError, TransportSettings};
+use v6cast_net::{close_code, GroupToken, NetError, TransportSettings};
 use v6cast_protocol::control::{MAX_CONTROL_FRAME, MAX_PEER_NAME_LEN};
 use v6cast_protocol::{
     ControlMessage, FrameRate, Hello, Preset, PresetRequest, ProtocolError, CONTROL_VERSION,
@@ -402,4 +402,43 @@ async fn dropping_a_viewer_ends_the_streamers_session() {
     assert!(streamer
         .send_datagram(bytes::Bytes::from_static(b"x"))
         .is_err());
+}
+
+/// The minimum length is the only defence against guessing the token, since the
+/// server does not rate-limit attempts. Pin the value so lowering it is a
+/// deliberate change.
+#[tokio::test]
+async fn group_tokens_shorter_than_16_bytes_are_refused_and_16_bytes_work() {
+    assert_eq!(v6cast_net::MIN_TOKEN_LEN, 16);
+    for len in [0, 1, 8, 15] {
+        assert!(
+            GroupToken::new(vec![b'k'; len]).is_err(),
+            "{len} bytes accepted"
+        );
+    }
+    for len in [16, 17, 255] {
+        assert!(
+            GroupToken::new(vec![b'k'; len]).is_ok(),
+            "{len} bytes refused"
+        );
+    }
+    assert!(GroupToken::new(vec![b'k'; 256]).is_err());
+
+    if !ipv6_or_skip() {
+        return;
+    }
+    // A token of exactly the minimum length authenticates end to end.
+    let secret = "0123456789abcdef";
+    let mut config = v6cast_net::ServerConfig::new(loopback(), token(secret));
+    config.name = "streamer".into();
+    let mut server = v6cast_net::Server::bind(config).unwrap();
+    let addr = server.local_addr().unwrap();
+    let viewer = within("connect", client(secret).connect(addr))
+        .await
+        .unwrap();
+    let streamer = within("accept", server.accept()).await.unwrap();
+    assert_eq!(viewer.session_id(), streamer.session_id());
+    // One byte off is still refused.
+    let wrong = within("wrong", client("0123456789abcdeX").connect(addr)).await;
+    assert!(matches!(wrong, Err(NetError::AuthRejected)), "{wrong:?}");
 }
