@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "v6cast: v6cast-media crate (skeleton)"
+description = "v6cast media pipeline: presets and scaling, H.264 coding, rendering and capture"
 
 [dependencies]
+v6cast-protocol = { path = "../v6cast-protocol" }
+thiserror = "2.0.21"
