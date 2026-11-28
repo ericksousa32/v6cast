@@ -70,6 +70,12 @@ struct Planes {
 }
 
 /// Draws [`YuvFrame`]s. Create one per target format.
+///
+/// Targets must use a non-sRGB format (for example `Bgra8Unorm` or
+/// `Rgba8Unorm`, not `Bgra8UnormSrgb`). The shader writes gamma-encoded RGB
+/// straight from BT.709 YUV; an sRGB target would encode it a second time and
+/// the picture would come out washed out. For a surface, pick a non-sRGB entry
+/// of the surface capabilities.
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -81,7 +87,8 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Uses an existing device, drawing into targets of `format`.
+    /// Uses an existing device, drawing into targets of `format`, which must
+    /// not be an sRGB format (see [`Renderer`]).
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("v6cast yuv"),
