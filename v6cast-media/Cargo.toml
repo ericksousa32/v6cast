@@ -27,7 +27,7 @@ pipewire = ["dep:pipewire", "dep:ashpd", "dep:tokio"]
 [target.'cfg(target_os = "linux")'.dependencies]
 cros-codecs = { version = "0.0.6", features = ["vaapi"], optional = true }
 gbm = { version = "0.15.0", default-features = false, optional = true }
-pipewire = { version = "0.10.1", optional = true }
+pipewire = { version = "0.10.1", features = ["v0_3_44"], optional = true }
 ashpd = { version = "0.14.3", default-features = false, features = ["tokio", "screencast"], optional = true }
 tokio = { version = "1.54.1", features = ["rt-multi-thread"], optional = true }
 

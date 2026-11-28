@@ -9,9 +9,12 @@
 //! * [`render`]: wgpu renderer with an aspect-ratio-preserving viewport.
 //! * [`capture`]: monitor and window capture (Linux portal + PipeWire with the
 //!   `pipewire` feature), delivering scaled I420 frames with monotonic timestamps.
+//! * [`audio`]: conditional audio (system loopback for a monitor, the window's
+//!   application only for a window, silence when that is not possible).
 
 #![forbid(unsafe_code)]
 
+pub mod audio;
 pub mod capture;
 pub mod codec;
 pub mod frame;
