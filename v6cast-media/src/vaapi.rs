@@ -67,6 +67,10 @@ fn err(e: impl std::fmt::Debug) -> CodecError {
     CodecError::backend(Backend::Vaapi, format!("{e:?}"))
 }
 
+/// Shortest IDR period, in frames, that the VA-API encoder accepts. Shorter
+/// ones (under about 0.5 s at 30 fps) are encoded in software instead.
+pub const MIN_KEYFRAME_INTERVAL_FRAMES: u32 = 16;
+
 fn worker_gone() -> CodecError {
     CodecError::backend(Backend::Vaapi, "worker thread stopped")
 }
@@ -243,6 +247,13 @@ impl VaapiEncoder {
         if r.width < min.width || r.height < min.height {
             return Err(CodecError::Unavailable(
                 "VA-API encoder for streams below 320x192",
+            ));
+        }
+        // cros-codecs sizes frame_num from the IDR period and needs at least 16
+        // (log2_max_frame_num_minus4 >= 0); shorter periods panic inside it.
+        if config.keyframe_interval_frames() < MIN_KEYFRAME_INTERVAL_FRAMES {
+            return Err(CodecError::Unavailable(
+                "VA-API encoder for keyframe intervals under 16 frames",
             ));
         }
         let cfg = config.clone();

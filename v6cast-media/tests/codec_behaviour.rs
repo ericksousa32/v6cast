@@ -511,24 +511,22 @@ fn a_small_window_does_not_fault_the_gpu() {
     }
 }
 
-/// A keyframe interval under 16 frames is accepted by `EncoderConfig::validate`
-/// but panics inside cros-codecs (`SpsBuilder::max_frame_num`: `ilog2() - 4`).
-/// The worker thread dies and the encoder reports "worker thread stopped".
+/// A keyframe interval under 16 frames used to panic inside cros-codecs
+/// (`SpsBuilder::max_frame_num`: `ilog2() - 4`). The VA-API encoder now refuses
+/// it up front, so automatic selection encodes in software, which honours the
+/// interval, and asking for hardware only gets a clean error.
 #[cfg(all(target_os = "linux", feature = "vaapi"))]
 #[test]
-#[ignore = "known bug: VA-API encoder worker panics for keyframe intervals under 16 frames"]
 fn a_keyframe_interval_under_16_frames_does_not_break_the_vaapi_encoder() {
-    if !vaapi_available() {
-        return;
-    }
     let out = r(320, 192);
     let mut cfg = config(out, Preset::P720, FrameRate::Fps30);
     cfg.keyframe_interval = std::time::Duration::from_millis(500); // 15 frames
-    assert!(
-        cfg.validate().is_ok(),
-        "the config is valid as far as validate() knows"
-    );
-    let mut e = open(Which::Vaapi, &cfg);
+    assert!(cfg.validate().is_ok(), "the config itself is valid");
+    assert!(v6cast_media::vaapi::VaapiEncoder::new(&cfg).is_err());
+    assert!(open_encoder(&cfg, BackendPreference::HardwareOnly).is_err());
+    let mut e = open(Which::Software, &cfg);
+    let auto = open_encoder(&cfg, BackendPreference::Auto).unwrap();
+    assert_eq!(auto.backend(), Backend::Software);
     assert_eq!(keyframes(e.as_mut(), out, 50), vec![0, 15, 30, 45]);
 }
 
