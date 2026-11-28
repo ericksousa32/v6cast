@@ -119,6 +119,8 @@ fn main() -> ExitCode {
     let mut request =
         CaptureRequest::new(args.source, OutputSize::Preset(args.preset, Alignment::Two));
     request.show_cursor = args.cursor;
+    // One epoch for the session; audio capture would take the same one.
+    request.epoch = Some(v6cast_media::capture::MediaEpoch::now());
 
     println!("Opening the screen sharing dialog ({:?})...", args.source);
     let capture = match ScreenCapture::start(request) {

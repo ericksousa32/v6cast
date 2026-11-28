@@ -21,7 +21,7 @@ use pw::spa;
 use pw::types::ObjectType;
 
 use super::{AudioChunk, AudioError, AudioNode, AudioPlan, CHANNELS, SAMPLE_RATE};
-use crate::capture::FrameClock;
+use crate::capture::{FrameClock, MediaEpoch};
 
 fn pw_err(e: pw::Error) -> AudioError {
     AudioError::PipeWire(e.to_string())
@@ -93,7 +93,7 @@ pub(super) struct AudioSession {
 }
 
 impl AudioSession {
-    pub(super) fn start(plan: &AudioPlan) -> Result<Self, AudioError> {
+    pub(super) fn start(plan: &AudioPlan, epoch: MediaEpoch) -> Result<Self, AudioError> {
         let targets: Vec<Option<u64>> = match plan {
             AudioPlan::SystemLoopback => vec![None],
             AudioPlan::Application { nodes } => nodes.iter().map(|n| n.serial).collect(),
@@ -111,7 +111,7 @@ impl AudioSession {
         let thread = std::thread::Builder::new()
             .name("v6cast-audio".into())
             .spawn(move || {
-                if let Err(e) = run(targets, chunk_tx, &ready_tx) {
+                if let Err(e) = run(targets, epoch, chunk_tx, &ready_tx) {
                     let _ = ready_tx.send(Err(e));
                 }
             })
@@ -169,6 +169,7 @@ type Ready = Result<pw::channel::Sender<()>, AudioError>;
 
 fn run(
     targets: Vec<Option<u64>>,
+    epoch: MediaEpoch,
     chunks: SyncSender<AudioChunk>,
     ready: &mpsc::Sender<Ready>,
 ) -> Result<(), AudioError> {
@@ -176,7 +177,7 @@ fn run(
     let mainloop = pw::main_loop::MainLoopRc::new(None).map_err(pw_err)?;
     let context = pw::context::ContextRc::new(&mainloop, None).map_err(pw_err)?;
     let core = context.connect_rc(None).map_err(pw_err)?;
-    let clock = Rc::new(RefCell::new(FrameClock::default()));
+    let clock = Rc::new(RefCell::new(FrameClock::with_epoch(epoch)));
     let format = format_pod()?;
 
     let mut streams = Vec::new();

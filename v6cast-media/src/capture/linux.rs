@@ -231,7 +231,10 @@ fn stream_frames(
     let state = StreamState {
         format: VideoInfoRaw::default(),
         layout: None,
-        clock: FrameClock::default(),
+        clock: request
+            .epoch
+            .map(FrameClock::with_epoch)
+            .unwrap_or_default(),
         request,
         frames,
         dropped,

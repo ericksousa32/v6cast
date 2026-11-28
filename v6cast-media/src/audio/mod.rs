@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use crate::capture::CaptureSource;
+use crate::capture::{CaptureSource, MediaEpoch};
 
 /// Sample rate of captured audio.
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -190,7 +190,7 @@ pub struct AudioChunk {
     pub source: usize,
     /// Interleaved stereo f32 samples.
     pub samples: Vec<f32>,
-    /// Microseconds since the first chunk of the session, monotonic.
+    /// Microseconds since the session's [`MediaEpoch`], monotonic.
     pub timestamp_us: u64,
 }
 
@@ -213,7 +213,20 @@ impl AudioCapture {
     /// Captures what [`plan_audio`] decides for `source` and `window`. Never
     /// fails because audio is impossible: it returns a silent capture whose
     /// [`AudioCapture::plan`] says why.
+    ///
+    /// Timestamps count from an epoch taken now; use
+    /// [`AudioCapture::start_with_epoch`] to share the video capture's epoch.
     pub fn start(source: CaptureSource, window: Option<&WindowIdentity>) -> Self {
+        Self::start_with_epoch(source, window, MediaEpoch::now())
+    }
+
+    /// Like [`AudioCapture::start`], with timestamps counted from `epoch`. Give
+    /// the video capture the same epoch (`CaptureRequest::epoch`) for lip-sync.
+    pub fn start_with_epoch(
+        source: CaptureSource,
+        window: Option<&WindowIdentity>,
+        epoch: MediaEpoch,
+    ) -> Self {
         #[cfg(all(target_os = "linux", feature = "pipewire"))]
         {
             let nodes = match linux::audio_nodes() {
@@ -227,7 +240,7 @@ impl AudioCapture {
                     session: None,
                 };
             }
-            match linux::AudioSession::start(&plan) {
+            match linux::AudioSession::start(&plan, epoch) {
                 Ok(session) => Self {
                     plan,
                     session: Some(session),
@@ -237,7 +250,7 @@ impl AudioCapture {
         }
         #[cfg(not(all(target_os = "linux", feature = "pipewire")))]
         {
-            let _ = (source, window);
+            let _ = (source, window, epoch);
             Self::silent(SilentReason::Unsupported)
         }
     }

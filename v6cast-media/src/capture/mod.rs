@@ -58,6 +58,11 @@ pub struct CaptureRequest {
     /// Draw the mouse cursor into the frames.
     pub show_cursor: bool,
     pub output: OutputSize,
+    /// Time origin of the timestamps. Give the same epoch to the video
+    /// capture and to [`crate::audio::AudioCapture::start_with_epoch`] so audio
+    /// and video timestamps can be compared (lip-sync). `None`: the first frame
+    /// is time zero.
+    pub epoch: Option<MediaEpoch>,
 }
 
 impl CaptureRequest {
@@ -66,7 +71,27 @@ impl CaptureRequest {
             source,
             show_cursor: true,
             output,
+            epoch: None,
         }
+    }
+}
+
+/// Shared time origin for the audio and video of one session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaEpoch(Instant);
+
+impl MediaEpoch {
+    /// An epoch starting now.
+    pub fn now() -> Self {
+        Self(Instant::now())
+    }
+
+    pub fn at(instant: Instant) -> Self {
+        Self(instant)
+    }
+
+    pub fn instant(self) -> Instant {
+        self.0
     }
 }
 
@@ -87,8 +112,8 @@ pub struct CapturedFrame {
     pub frame: YuvFrame,
     /// Size of the captured image before scaling.
     pub source_size: Resolution,
-    /// Microseconds since the first frame of the session, from a monotonic
-    /// clock; strictly increasing.
+    /// Microseconds since the request's epoch (by default the first frame of
+    /// the session), from a monotonic clock; strictly increasing.
     pub timestamp_us: u64,
 }
 
@@ -122,8 +147,18 @@ pub struct FrameClock {
 }
 
 impl FrameClock {
-    /// Timestamp for a frame captured at `now`. The first frame is 0; a frame
-    /// that arrives at the same microsecond as the previous one gets +1.
+    /// A clock whose timestamps count from `epoch`, so clocks sharing an epoch
+    /// produce comparable timestamps. Instants before the epoch stamp as 0.
+    pub fn with_epoch(epoch: MediaEpoch) -> Self {
+        Self {
+            start: Some(epoch.0),
+            last_us: None,
+        }
+    }
+
+    /// Timestamp for a frame captured at `now`, in microseconds since the
+    /// epoch (by default the first frame); a frame that arrives at the same
+    /// microsecond as the previous one gets +1.
     pub fn stamp(&mut self, now: Instant) -> u64 {
         let start = *self.start.get_or_insert(now);
         let us = now.saturating_duration_since(start).as_micros();
@@ -212,6 +247,22 @@ mod tests {
         assert_eq!(clock.stamp(t0 + Duration::from_micros(16_667)), 16_668);
         assert_eq!(clock.stamp(t0), 16_669);
         assert_eq!(clock.stamp(t0 + Duration::from_millis(50)), 50_000);
+    }
+
+    #[test]
+    fn clocks_sharing_an_epoch_give_comparable_timestamps() {
+        let epoch = MediaEpoch::now();
+        let t = epoch.instant();
+        let mut video = FrameClock::with_epoch(epoch);
+        let mut audio = FrameClock::with_epoch(epoch);
+        // Audio starts 10 ms in, video 12 ms in: the offset is kept.
+        assert_eq!(audio.stamp(t + Duration::from_millis(10)), 10_000);
+        assert_eq!(video.stamp(t + Duration::from_millis(12)), 12_000);
+        assert_eq!(audio.stamp(t + Duration::from_millis(20)), 20_000);
+        // Before the epoch: zero, then still strictly increasing.
+        let mut early = FrameClock::with_epoch(MediaEpoch::at(t + Duration::from_secs(1)));
+        assert_eq!(early.stamp(t), 0);
+        assert_eq!(early.stamp(t), 1);
     }
 
     #[test]
