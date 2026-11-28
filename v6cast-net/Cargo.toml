@@ -10,6 +10,7 @@ description = "v6cast network engine: QUIC over IPv6, group token auth, fan-out,
 [dependencies]
 v6cast-protocol = { path = "../v6cast-protocol" }
 bytes = "1.12.2"
+netdev = { version = "0.48.0", default-features = false, features = ["gateway"] }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rcgen = "0.14.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
