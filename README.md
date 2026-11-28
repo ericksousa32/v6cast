@@ -296,4 +296,5 @@ requests into `dev`.
 
 ## Licence
 
-See [LICENSE](LICENSE).
+See [LICENSE](LICENSE). Third-party components, including the vendored crates and their
+license files, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
