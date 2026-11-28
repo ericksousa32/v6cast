@@ -88,12 +88,16 @@ impl Alignment {
     }
 }
 
+/// Smallest encoded width and height: one H.264 macroblock. openh264 refuses
+/// smaller sides with an opaque error, so the scaler stops here.
+pub const MIN_ENCODED_SIDE: u32 = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ScaleError {
     #[error("source size {0} has a zero dimension")]
     EmptySource(Resolution),
-    #[error("source size {size} is smaller than one {alignment}-pixel block after scaling")]
-    TooSmall { size: Resolution, alignment: u32 },
+    #[error("scaled size {scaled} has a side under {min} pixels, the H.264 encoder minimum")]
+    TooSmall { scaled: Resolution, min: u32 },
 }
 
 /// Scales `source` into `bounds`, keeping the aspect ratio. See the module docs.
@@ -117,10 +121,10 @@ pub fn fit(
     };
     // w <= source and h <= source, so both fit in u32.
     let scaled = Resolution::new(alignment.down(w as u32), alignment.down(h as u32));
-    if scaled.width == 0 || scaled.height == 0 {
+    if scaled.width < MIN_ENCODED_SIDE || scaled.height < MIN_ENCODED_SIDE {
         return Err(ScaleError::TooSmall {
-            size: source,
-            alignment: alignment.get(),
+            scaled,
+            min: MIN_ENCODED_SIDE,
         });
     }
     Ok(scaled)
@@ -266,7 +270,18 @@ mod tests {
         assert!(fit_preset(r(1920, 0), Preset::P1080, Alignment::Two).is_err());
         assert!(fit_preset(r(1, 1), Preset::P720, Alignment::Two).is_err());
         assert!(fit_preset(r(15, 15), Preset::P720, Alignment::Sixteen).is_err());
-        assert_eq!(at(Preset::P720, 2, 2), r(2, 2));
+        // Sides under one macroblock get a clear error naming the minimum.
+        assert_eq!(
+            fit_preset(r(2, 2), Preset::P720, Alignment::Two),
+            Err(ScaleError::TooSmall {
+                scaled: r(2, 2),
+                min: MIN_ENCODED_SIDE
+            })
+        );
+        assert!(fit_preset(r(640, 14), Preset::P720, Alignment::Two).is_err());
+        assert_eq!(at(Preset::P720, 16, 16), r(16, 16));
+        // A thin strip shrinks below 16 rows once it is scaled into the box.
+        assert!(fit_preset(r(10_000, 100), Preset::P720, Alignment::Two).is_err());
         // A 1-pixel-high strip collapses to zero height after scaling.
         assert!(fit_preset(r(100_000, 1), Preset::P720, Alignment::Two).is_err());
         // Extreme sizes do not overflow.

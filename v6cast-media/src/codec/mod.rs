@@ -158,6 +158,11 @@ impl EncoderConfig {
                 "resolution must be non-zero and even",
             ));
         }
+        if r.width < crate::scale::MIN_ENCODED_SIDE || r.height < crate::scale::MIN_ENCODED_SIDE {
+            return Err(CodecError::InvalidConfig(
+                "resolution has a side under 16 pixels, the H.264 minimum",
+            ));
+        }
         if r.width > 4096 || r.height > 4096 {
             return Err(CodecError::InvalidConfig("resolution above 4096 pixels"));
         }
@@ -516,6 +521,11 @@ mod tests {
         assert!(config(0, 1080).validate().is_err());
         assert!(config(1921, 1080).validate().is_err());
         assert!(config(8192, 1080).validate().is_err());
+        assert!(matches!(
+            config(640, 8).validate(),
+            Err(CodecError::InvalidConfig(m)) if m.contains("16 pixels")
+        ));
+        assert!(config(16, 16).validate().is_ok());
         let c = EncoderConfig {
             bitrate_bps: 0,
             ..config(64, 64)
