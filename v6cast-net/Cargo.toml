@@ -1,0 +1,10 @@
+[package]
+name = "v6cast-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "v6cast: v6cast-net crate (skeleton)"
+
+[dependencies]
